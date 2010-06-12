@@ -20,6 +20,9 @@ gconfig: $(obj)/gconf
 menuconfig: $(obj)/mconf
 	$< $(Kconfig)
 
+satconfig: $(obj)/satconf
+	$< $(Kconfig)
+
 config: $(obj)/conf
 	$< --oldaskconfig $(Kconfig)
 
@@ -141,8 +144,8 @@ lxdialog := lxdialog/checklist.o lxdialog/util.o lxdialog/inputbox.o
 lxdialog += lxdialog/textbox.o lxdialog/yesno.o lxdialog/menubox.o
 
 conf-objs	:= conf.o  zconf.tab.o
-mconf-objs     := mconf.o zconf.tab.o $(lxdialog)
-nconf-objs     := nconf.o zconf.tab.o nconf.gui.o
+nconf-objs      := nconf.o zconf.tab.o nconf.gui.o
+satconf-objs	:= satconf.o zconf.tab.o
 kxgettext-objs	:= kxgettext.o zconf.tab.o
 qconf-cxxobjs	:= qconf.o
 qconf-objs	:= zconf.tab.o
@@ -160,6 +163,10 @@ endif
 
 ifeq ($(MAKECMDGOALS),update-po-config)
 	hostprogs-y += kxgettext
+endif
+
+ifeq ($(MAKECMDGOALS),satconfig)
+	hostprogs-y += satconf
 endif
 
 ifeq ($(MAKECMDGOALS),xconfig)
@@ -180,7 +187,7 @@ endif
 
 clean-files	:= qconf.moc .tmp_qtcheck .tmp_gtkcheck
 clean-files	+= zconf.tab.c zconf.lex.c zconf.hash.c gconf.glade.h
-clean-files     += mconf qconf gconf nconf
+clean-files     += mconf qconf gconf nconf satconf
 clean-files     += config.pot linux.pot
 
 # Check that we have the required ncurses stuff installed for lxdialog (menuconfig)
