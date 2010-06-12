@@ -3,7 +3,7 @@
 # These targets are used from top-level makefile
 
 PHONY += xconfig gconfig menuconfig config silentoldconfig update-po-config \
-	localmodconfig localyesconfig
+	localmodconfig localyesconfig satconfig
 
 ifdef KBUILD_KCONFIG
 Kconfig := $(KBUILD_KCONFIG)
@@ -25,6 +25,9 @@ gconfig: $(obj)/gconf
 	$< $(silent) $(Kconfig)
 
 menuconfig: $(obj)/mconf
+	$< $(silent) $(Kconfig)
+
+satconfig: $(obj)/satconf
 	$< $(silent) $(Kconfig)
 
 config: $(obj)/conf
@@ -131,6 +134,7 @@ help:
 	@echo  '  menuconfig	  - Update current config utilising a menu based program'
 	@echo  '  xconfig	  - Update current config utilising a Qt based front-end'
 	@echo  '  gconfig	  - Update current config utilising a GTK+ based front-end'
+	@echo  '  satconfig       - New config respecting the .satconfig constraints'
 	@echo  '  oldconfig	  - Update current config utilising a provided .config as base'
 	@echo  '  localmodconfig  - Update current config disabling modules not loaded'
 	@echo  '  localyesconfig  - Update current config converting local mods to core'
@@ -174,14 +178,14 @@ lxdialog := lxdialog/checklist.o lxdialog/util.o lxdialog/inputbox.o
 lxdialog += lxdialog/textbox.o lxdialog/yesno.o lxdialog/menubox.o
 
 conf-objs	:= conf.o  zconf.tab.o
-mconf-objs     := mconf.o zconf.tab.o $(lxdialog)
-nconf-objs     := nconf.o zconf.tab.o nconf.gui.o
+nconf-objs      := nconf.o zconf.tab.o nconf.gui.o
+satconf-objs	:= satconf.o zconf.tab.o
 kxgettext-objs	:= kxgettext.o zconf.tab.o
 qconf-cxxobjs	:= qconf.o
 qconf-objs	:= zconf.tab.o
 gconf-objs	:= gconf.o zconf.tab.o
 
-hostprogs-y := conf nconf mconf kxgettext qconf gconf
+hostprogs-y := conf nconf mconf kxgettext qconf gconf satconf
 
 clean-files	:= qconf.moc .tmp_qtcheck .tmp_gtkcheck
 clean-files	+= zconf.tab.c zconf.lex.c zconf.hash.c gconf.glade.h
