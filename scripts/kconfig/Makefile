@@ -35,6 +35,7 @@ menuconfig-prog	:= mconf
 nconfig-prog	:= nconf
 gconfig-prog	:= gconf
 xconfig-prog	:= qconf
+satconfig-prog	:= satconf
 
 define config_rule
 PHONY += $(1)
@@ -45,7 +46,7 @@ PHONY += build_$(1)
 build_$(1): $(obj)/$($(1)-prog)
 endef
 
-$(foreach c, config menuconfig nconfig gconfig xconfig, $(eval $(call config_rule,$(c))))
+$(foreach c, config menuconfig nconfig gconfig xconfig satconfig, $(eval $(call config_rule,$(c))))
 
 PHONY += localmodconfig localyesconfig
 localyesconfig localmodconfig: $(obj)/conf
@@ -113,6 +114,10 @@ testconfig: $(obj)/conf
 	$(if $(findstring 1,$(KBUILD_VERBOSE)),--capture=no)
 clean-files += tests/.cache
 
+PHONY += satrandconfig
+satrandconfig: $(obj)/satconf
+	$(Q)$< $(silent) --random $(Kconfig)
+
 # Help text used by make help
 help:
 	@echo  '  config	  - Update current config utilising a line-oriented program'
@@ -120,6 +125,8 @@ help:
 	@echo  '  menuconfig	  - Update current config utilising a menu based program'
 	@echo  '  xconfig	  - Update current config utilising a Qt based front-end'
 	@echo  '  gconfig	  - Update current config utilising a GTK+ based front-end'
+	@echo  '  satconfig       - New config respecting the .satconfig constraints'
+	@echo  '  satrandconfig	  - New config respecting .satconfig with random answers'
 	@echo  '  oldconfig	  - Update current config utilising a provided .config as base'
 	@echo  '  localmodconfig  - Update current config disabling modules not loaded'
 	@echo  '                    except those preserved by LMC_KEEP environment variable'
@@ -149,6 +156,12 @@ common-objs	:= confdata.o expr.o lexer.lex.o menu.o parser.tab.o \
 $(obj)/lexer.lex.o: $(obj)/parser.tab.h
 HOSTCFLAGS_lexer.lex.o	:= -I $(srctree)/$(src)
 HOSTCFLAGS_parser.tab.o	:= -I $(srctree)/$(src)
+
+# Silence some warnings in picosat (imported code)
+HOSTCFLAGS_satconf.o	= -Wno-strict-prototypes
+HOSTCFLAGS_picosat.o	= -Wno-strict-prototypes -Wno-missing-prototypes \
+			  -Wno-unused-but-set-variable -Wno-pointer-compare \
+			  -DTRACE
 
 # conf: Used for defconfig, oldconfig and related targets
 hostprogs	+= conf
@@ -203,6 +216,10 @@ HOSTLDLIBS_gconf    = $(shell . $(obj)/gconf-cfg && echo $$libs)
 HOSTCFLAGS_gconf.o  = $(shell . $(obj)/gconf-cfg && echo $$cflags)
 
 $(obj)/gconf.o: $(obj)/gconf-cfg
+
+# satconf: Used for satconfig
+hostprogs	+= satconf
+satconf-objs	:= satconfig.o satconf.o picosat.o $(common-objs)
 
 # check if necessary packages are available, and configure build flags
 filechk_conf_cfg = $(CONFIG_SHELL) $<

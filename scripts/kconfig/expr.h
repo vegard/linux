@@ -71,8 +71,11 @@ enum {
 	S_DEF_AUTO,		/* values read from auto.conf */
 	S_DEF_DEF3,		/* Reserved for UI usage */
 	S_DEF_DEF4,		/* Reserved for UI usage */
+	S_DEF_SAT,		/* used by solver for user's choice */
 	S_DEF_COUNT
 };
+
+struct bool_expr;
 
 /*
  * Represents a configuration symbol.
@@ -129,6 +132,13 @@ struct symbol {
 	 * "Weak" reverse dependencies through being implied by other symbols
 	 */
 	struct expr_value implied;
+
+	/* Used by the SAT solver */
+
+	/* S_BOOLEAN symbols have one variable, while S_TRISTATE symbols
+	 * have two. */
+	unsigned int sat_variable;
+	struct bool_expr *selected_expr;
 };
 
 #define for_all_symbols(i, sym) for (i = 0; i < SYMBOL_HASHSIZE; i++) for (sym = symbol_hash[i]; sym; sym = sym->next)
@@ -152,9 +162,10 @@ struct symbol {
 #define SYMBOL_DEF_AUTO   0x20000  /* symbol.def[S_DEF_AUTO] is valid */
 #define SYMBOL_DEF3       0x40000  /* symbol.def[S_DEF_3] is valid */
 #define SYMBOL_DEF4       0x80000  /* symbol.def[S_DEF_4] is valid */
+#define SYMBOL_SAT       0x100000  /* symbol.def[S_DEF_SAT] is valid */
 
 /* choice values need to be set before calculating this symbol value */
-#define SYMBOL_NEED_SET_CHOICE_VALUES  0x100000
+#define SYMBOL_NEED_SET_CHOICE_VALUES  0x200000
 
 #define SYMBOL_MAXLENGTH	256
 #define SYMBOL_HASHSIZE		9973
@@ -168,6 +179,7 @@ struct symbol {
  *         select BAR
  * config BAZ
  *         int "BAZ Value"
+ *         depends on BAR
  *         range 1..255
  *
  * Please, also check parser.y:print_symbol() when modifying the
@@ -197,6 +209,8 @@ struct property {
 	                            * P_PROMPT, P_DEFAULT, P_MENU, P_COMMENT */
 	struct file *file;         /* what file was this property defined */
 	int lineno;                /* what lineno was this property defined */
+
+	unsigned int sat_variable; /* P_PROMPT */
 };
 
 #define for_all_properties(sym, st, tok) \
@@ -207,6 +221,26 @@ struct property {
 #define for_all_prompts(sym, st) \
 	for (st = sym->prop; st; st = st->next) \
 		if (st->text)
+
+static inline bool sym_has_prompt(struct symbol *sym)
+{
+	struct property *prop;
+
+	for_all_prompts(sym, prop)
+		return true;
+
+	return false;
+}
+
+static inline struct property *sym_get_prompt(struct symbol *sym)
+{
+	struct property *prop;
+
+	for_all_prompts(sym, prop)
+		return prop;
+
+	return NULL;
+}
 
 /*
  * Represents a node in the menu tree, as seen in e.g. menuconfig (though used
