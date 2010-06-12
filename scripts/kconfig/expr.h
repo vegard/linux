@@ -85,6 +85,12 @@ struct symbol {
 	struct property *prop;
 	struct expr_value dir_dep;
 	struct expr_value rev_dep;
+
+	/* Used by the SAT solver */
+
+	/* S_BOOLEAN symbols have one variable, while S_TRISTATE symbols
+	 * have two. */
+	unsigned int sat_variable;
 };
 
 #define for_all_symbols(i, sym) for (i = 0; i < SYMBOL_HASHSIZE; i++) for (sym = symbol_hash[i]; sym; sym = sym->next) if (sym->type != S_OTHER)
