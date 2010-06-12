@@ -8,6 +8,7 @@
 
 #define LKC_DIRECT_LINK
 #include "lkc.h"
+#include "picosat.h"
 
 static unsigned int nr_sat_variables;
 static struct symbol **sat_variables;
@@ -19,6 +20,9 @@ static void assign_sat_variables(void)
 	unsigned int variable = 0;
 
 	assert(nr_sat_variables == 0);
+
+	/* The solver uses variable 0 as an end-of-clause marker. */
+	++nr_sat_variables;
 
 	/* Just count the number of variables we'll need */
 	for_all_symbols(i, sym) {
@@ -35,6 +39,7 @@ static void assign_sat_variables(void)
 	}
 
 	sat_variables = malloc(nr_sat_variables * sizeof(*sat_variables));
+	sat_variables[variable++] = NULL;
 
 	/* Assign variables to each symbol */
 	for_all_symbols(i, sym) {
@@ -341,11 +346,87 @@ static struct bool_expr *expr_to_bool_expr(struct symbol *lhs, struct expr *e)
 		assert(false);
 	}
 
-	printf("%d\n", e->type);
 	assert(false);
 }
 
-static void build_clauses(void)
+static struct bool_expr *bool_to_cnf(struct bool_expr *e)
+{
+	/* XXX: All of this is hugely inefficient */
+	if (e->op == AND) {
+		return bool_and(bool_to_cnf(e->binary.a),
+				bool_to_cnf(e->binary.b));
+	}
+
+	if (e->op == OR) {
+		struct bool_expr *a = bool_to_cnf(e->binary.a);
+		struct bool_expr *b = bool_to_cnf(e->binary.b);
+
+		if (a->op == AND) {
+			return bool_and(bool_to_cnf(bool_or(b, a->binary.a)),
+					bool_to_cnf(bool_or(b, a->binary.b)));
+		}
+
+		if (b->op == AND) {
+			return bool_and(bool_to_cnf(bool_or(a, b->binary.a)),
+					bool_to_cnf(bool_or(a, b->binary.b)));
+		}
+
+		return bool_or(a, b);
+	}
+
+	return e;
+}
+
+static bool bool_to_clause(struct bool_expr *e)
+{
+	switch (e->op) {
+	case CONST:
+		return e->nullary;
+	case VAR:
+		picosat_add(e->var);
+		return true;
+	case NOT:
+		assert(e->unary->op == VAR);
+		picosat_add(-e->unary->var);
+		return true;
+	case OR:
+		return bool_to_clause(e->binary.a)
+			&& bool_to_clause(e->binary.b);
+	default:
+		assert(false);
+	}
+}
+
+static bool bool_to_clauses(struct bool_expr *e)
+{
+	switch (e->op) {
+	case CONST:
+		return e->nullary;
+	case VAR:
+		picosat_add(e->var);
+		picosat_add(0);
+		return true;
+	case NOT:
+		assert(e->unary->op == VAR);
+		picosat_add(-e->unary->var);
+		picosat_add(0);
+		return true;
+	case AND:
+		return bool_to_clauses(e->binary.a)
+			&& bool_to_clauses(e->binary.b);
+	case OR:
+		if (!bool_to_clause(e->binary.a))
+			return false;
+		if (!bool_to_clause(e->binary.b))
+			return false;
+		picosat_add(0);
+		return true;
+	default:
+		assert(false);
+	}
+}
+
+static bool build_clauses(void)
 {
 	unsigned int i;
 	struct symbol *sym;
@@ -358,45 +439,29 @@ static void build_clauses(void)
 
 		if (sym->type == S_TRISTATE) {
 			/* Add the VAR_m -> VAR restriction */
-
-			/* XXX: Actually do it. */
-			bool_or(bool_var(sym->sat_variable + 1),
-				bool_not(bool_var(sym->sat_variable)));
+			struct bool_expr *e = bool_or(bool_not(bool_var(sym->sat_variable + 1)),
+						      bool_var(sym->sat_variable));
+			if (!bool_to_clauses(bool_to_cnf(e)))
+				return false;
 		}
-
-#if 0
-		/* XXX: For debugging purposes */
-		for_all_prompts(sym, prop) {
-			if (!sym->name)
-				continue;
-
-			printf("%s:\n", sym->name);
-
-			expr_fprint(prop->visible.expr, stdout);
-			printf("\n");
-
-			if (prop->visible.expr) {
-				bool_printf(expr_to_bool_expr(sym, prop->visible.expr));
-				printf("\n");
-			}
-
-			printf("\n");
-		}
-#endif
 
 		/* Add dependencies */
 		for_all_prompts(sym, prop) {
 			if (!sym->name)
 				continue;
+			if (!prop->visible.expr)
+				continue;
 
-			if (prop->visible.expr) {
-				/* XXX: Actually do it. */
-				expr_to_bool_expr(sym, prop->visible.expr);
-			}
+			struct bool_expr *e = bool_or(bool_not(bool_var(sym->sat_variable)),
+						      expr_to_bool_expr(sym, prop->visible.expr));
+			if (!bool_to_clauses(bool_to_cnf(e)))
+				return false;
 		}
 
 		/* XXX: Add "select"ed dependencies */
 	}
+
+	return true;
 }
 
 /* XXX: For debugging purposes only! */
@@ -430,6 +495,8 @@ int main(int argc, char *argv[])
 	bindtextdomain(PACKAGE, LOCALEDIR);
 	textdomain(PACKAGE);
 
+	picosat_init();
+
 	conf_parse(argv[1]);
 
 	/* XXX: We need this to initialise values for non-boolean (and non-
@@ -441,7 +508,25 @@ int main(int argc, char *argv[])
 		check_conf();
 
 	assign_sat_variables();
-	build_clauses();
+	picosat_adjust(nr_sat_variables);
+
+	if (!build_clauses()) {
+		fprintf(stderr, "error: inconsistent kconfig files while "
+			"building clauses\n");
+		exit(EXIT_FAILURE);
+	}
+
+	picosat_print(stdout);
+
+	{
+		int sat = picosat_sat(-1);
+
+		if (sat != PICOSAT_SATISFIABLE) {
+			fprintf(stderr, "error: inconsistent kconfig files "
+				"when solving instance\n");
+			exit(EXIT_FAILURE);
+		}
+	}
 
 	printf("ok\n");
 	return EXIT_SUCCESS;

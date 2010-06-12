@@ -179,7 +179,7 @@ lxdialog += lxdialog/textbox.o lxdialog/yesno.o lxdialog/menubox.o
 
 conf-objs	:= conf.o  zconf.tab.o
 nconf-objs      := nconf.o zconf.tab.o nconf.gui.o
-satconf-objs	:= satconf.o zconf.tab.o
+satconf-objs	:= satconf.o zconf.tab.o picosat.o
 kxgettext-objs	:= kxgettext.o zconf.tab.o
 qconf-cxxobjs	:= qconf.o
 qconf-objs	:= zconf.tab.o
