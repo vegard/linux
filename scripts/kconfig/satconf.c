@@ -234,6 +234,11 @@ static struct bool_expr *bool_or(struct bool_expr *a, struct bool_expr *b)
 	return e;
 }
 
+static struct bool_expr *bool_dep(struct bool_expr *a, struct bool_expr *b)
+{
+	return bool_or(bool_not(a), b);
+}
+
 static struct bool_expr *bool_eq(struct bool_expr *a, struct bool_expr *b)
 {
 	/* XXX: Introduce extra variables */
@@ -264,6 +269,11 @@ static struct bool_expr *equal_expr_to_bool_expr(struct symbol *left, struct sym
 		|| left->type == S_HEX
 		|| left->type == S_STRING)
 	{
+		if (!sym_get_string_value(left) || !sym_get_string_value(right)) {
+			fprintf(stderr, "warning: Undefined value for string: %s\n", left->name);
+			return bool_const(false);
+		}
+
 		return bool_const(strcmp(sym_get_string_value(left),
 					 sym_get_string_value(right)) == 0);
 	}
@@ -325,8 +335,8 @@ static struct bool_expr *expr_to_bool_expr(struct symbol *lhs, struct expr *e)
 			/* We already have the VAR_m -> VAR clause, so we
 			 * only need to add VAR -> VAR_m to make it a bi-
 			 * conditional. */
-			return bool_or(bool_var(lhs->sat_variable),
-				       bool_not(bool_var(lhs->sat_variable + 1)));
+			return bool_dep(bool_var(lhs->sat_variable),
+					bool_var(lhs->sat_variable + 1));
 		}
 
 		/* An undefined symbol typically means that something was
@@ -430,6 +440,8 @@ static bool build_clauses(void)
 {
 	unsigned int i;
 	struct symbol *sym;
+	struct symbol *modules_sym = sym_find("MODULES");
+	assert(modules_sym);
 
 	for_all_symbols(i, sym) {
 		struct property *prop;
@@ -438,27 +450,50 @@ static bool build_clauses(void)
 			continue;
 
 		if (sym->type == S_TRISTATE) {
+			struct bool_expr *e;
+
 			/* Add the VAR_m -> VAR restriction */
-			struct bool_expr *e = bool_or(bool_not(bool_var(sym->sat_variable + 1)),
-						      bool_var(sym->sat_variable));
+			e = bool_dep(bool_var(sym->sat_variable + 1),
+				     bool_var(sym->sat_variable));
+			if (!bool_to_clauses(bool_to_cnf(e)))
+				return false;
+
+			/* Add the VAR_m -> MODULES restriction */
+			e = bool_dep(bool_var(sym->sat_variable + 1),
+				     bool_var(modules_sym->sat_variable));
 			if (!bool_to_clauses(bool_to_cnf(e)))
 				return false;
 		}
 
 		/* Add dependencies */
 		for_all_prompts(sym, prop) {
+			struct bool_expr *e;
+
+			/* XXX: ??? */
 			if (!sym->name)
 				continue;
 			if (!prop->visible.expr)
 				continue;
 
-			struct bool_expr *e = bool_or(bool_not(bool_var(sym->sat_variable)),
-						      expr_to_bool_expr(sym, prop->visible.expr));
+			e = bool_dep(bool_var(sym->sat_variable),
+				     expr_to_bool_expr(sym, prop->visible.expr));
 			if (!bool_to_clauses(bool_to_cnf(e)))
 				return false;
 		}
 
-		/* XXX: Add "select"ed dependencies */
+		/* Add "select" dependencies */
+		for_all_properties(sym, prop, P_SELECT) {
+			struct bool_expr *e;
+
+			/* XXX: ??? */
+			if (!sym->name)
+				continue;
+
+			e = bool_dep(bool_var(sym->sat_variable),
+				     expr_to_bool_expr(sym, prop->expr));
+			if (!bool_to_clauses(bool_to_cnf(e)))
+				return false;
+		}
 	}
 
 	return true;
@@ -496,13 +531,14 @@ int main(int argc, char *argv[])
 	textdomain(PACKAGE);
 
 	picosat_init();
+	picosat_set_global_default_phase(-1);
 
 	conf_parse(argv[1]);
 
 	/* XXX: We need this to initialise values for non-boolean (and non-
 	 * tristate) variables. This should go away when we read .satconfig
 	 * instead for these kinds of variables. */
-	conf_read(NULL);
+	conf_read_simple(NULL, S_DEF_USER);
 
 	if (false)
 		check_conf();
@@ -516,16 +552,58 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-	picosat_print(stdout);
-
 	{
 		int sat = picosat_sat(-1);
+		unsigned int i;
 
-		if (sat != PICOSAT_SATISFIABLE) {
+		if (sat == PICOSAT_UNKNOWN) {
 			fprintf(stderr, "error: inconsistent kconfig files "
-				"when solving instance\n");
+				"(unsatisfiable instance?)\n");
 			exit(EXIT_FAILURE);
 		}
+
+		if (sat == PICOSAT_UNSATISFIABLE) {
+			fprintf(stderr, "error: inconsistent kconfig files "
+				"(unsatisfiable instance)\n");
+			exit(EXIT_FAILURE);
+		}
+
+		struct symbol *sym;
+		for_all_symbols(i, sym) {
+			struct property *prop;
+
+			if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
+				continue;
+
+			{
+				int v = picosat_deref(sym->sat_variable);
+				assert(v != 0);
+
+				if (v == 1)
+					sym->curr.tri = yes;
+				else if (v == -1)
+					sym->curr.tri = no;
+			}
+
+			if (sym->type == S_TRISTATE) {
+				int v = picosat_deref(sym->sat_variable + 1);
+				assert(v != 0);
+
+				if (v == 1)
+					sym->curr.tri = mod;
+			}
+
+#if 0
+			sym->def[S_DEF_USER] = sym->curr;
+#endif
+			sym->flags |= SYMBOL_VALID;
+			sym->flags |= SYMBOL_WRITE;
+		}
+	}
+
+	if (conf_write(".config")) {
+		fprintf(stderr, "error: writing configuration\n");
+		exit(EXIT_FAILURE);
 	}
 
 	printf("ok\n");
