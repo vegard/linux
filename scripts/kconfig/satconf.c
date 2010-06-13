@@ -540,6 +540,18 @@ int main(int argc, char *argv[])
 	 * instead for these kinds of variables. */
 	conf_read_simple(NULL, S_DEF_USER);
 
+	{
+		/* We need to do this in order to give strings from the
+		 * environment get their values in the proper place. It
+		 * is also necessary for INT/HEX values, but doesn't
+		 * seem to make any difference for BOOL/TRISTATE
+		 * variables (we set them below anyway). */
+		unsigned int i;
+		struct symbol *sym;
+		for_all_symbols(i, sym)
+			sym_calc_value(sym);
+	}
+
 	if (false)
 		check_conf();
 
