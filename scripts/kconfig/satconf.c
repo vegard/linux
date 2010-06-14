@@ -539,6 +539,7 @@ int main(int argc, char *argv[])
 	 * tristate) variables. This should go away when we read .satconfig
 	 * instead for these kinds of variables. */
 	conf_read_simple(NULL, S_DEF_USER);
+	conf_read_simple(".satconfig", S_DEF_SAT);
 
 	{
 		/* We need to do this in order to give strings from the
@@ -548,8 +549,12 @@ int main(int argc, char *argv[])
 		 * variables (we set them below anyway). */
 		unsigned int i;
 		struct symbol *sym;
-		for_all_symbols(i, sym)
-			sym_calc_value(sym);
+		for_all_symbols(i, sym) {
+			if (sym->flags & (SYMBOL_DEF << S_DEF_SAT))
+				sym->curr = sym->def[S_DEF_SAT];
+			else if (sym->flags & (SYMBOL_DEF << S_DEF_USER))
+				sym->curr = sym->def[S_DEF_USER];
+		}
 	}
 
 	if (false)
@@ -562,6 +567,31 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "error: inconsistent kconfig files while "
 			"building clauses\n");
 		exit(EXIT_FAILURE);
+	}
+
+	{
+		/* Use assumptions */
+		unsigned int i;
+		struct symbol *sym;
+		for_all_symbols(i, sym) {
+			if (!(sym->flags & (SYMBOL_DEF << S_DEF_SAT)))
+				continue;
+			if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
+				continue;
+
+			switch (sym->curr.tri) {
+			case no:
+				picosat_assume(-sym->sat_variable);
+				break;
+			case yes:
+				picosat_assume(sym->sat_variable);
+				break;
+			case mod:
+				assert(sym->type == S_TRISTATE);
+				picosat_assume(sym->sat_variable + 1);
+				break;
+			}
+		}
 	}
 
 	{

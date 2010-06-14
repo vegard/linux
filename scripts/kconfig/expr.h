@@ -71,6 +71,7 @@ enum {
 	S_DEF_AUTO,		/* values read from auto.conf */
 	S_DEF_DEF3,		/* Reserved for UI usage */
 	S_DEF_DEF4,		/* Reserved for UI usage */
+	S_DEF_SAT,		/* used by solver for user's choice */
 	S_DEF_COUNT
 };
 
@@ -113,12 +114,13 @@ struct symbol {
 #define SYMBOL_DEF_AUTO   0x20000  /* symbol.def[S_DEF_AUTO] is valid */
 #define SYMBOL_DEF3       0x40000  /* symbol.def[S_DEF_3] is valid */
 #define SYMBOL_DEF4       0x80000  /* symbol.def[S_DEF_4] is valid */
+#define SYMBOL_SAT       0x100000  /* symbol.def[S_DEF_SAT] is valid */
 
 /* choice values need to be set before calculating this symbol value */
-#define SYMBOL_NEED_SET_CHOICE_VALUES  0x100000
+#define SYMBOL_NEED_SET_CHOICE_VALUES  0x200000
 
 /* Set symbol to y if allnoconfig; used for symbols that hide others */
-#define SYMBOL_ALLNOCONFIG_Y 0x200000
+#define SYMBOL_ALLNOCONFIG_Y 0x400000
 
 #define SYMBOL_MAXLENGTH	256
 #define SYMBOL_HASHSIZE		9973
