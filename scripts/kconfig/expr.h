@@ -68,6 +68,7 @@ enum {
 	S_DEF_AUTO,		/* values read from auto.conf */
 	S_DEF_DEF3,		/* Reserved for UI usage */
 	S_DEF_DEF4,		/* Reserved for UI usage */
+	S_DEF_SAT,		/* used by solver for user's choice */
 	S_DEF_COUNT
 };
 
@@ -110,6 +111,7 @@ struct symbol {
 #define SYMBOL_DEF_AUTO   0x20000  /* symbol.def[S_DEF_AUTO] is valid */
 #define SYMBOL_DEF3       0x40000  /* symbol.def[S_DEF_3] is valid */
 #define SYMBOL_DEF4       0x80000  /* symbol.def[S_DEF_4] is valid */
+#define SYMBOL_SAT       0x100000  /* symbol.def[S_DEF_SAT] is valid */
 
 #define SYMBOL_MAXLENGTH	256
 #define SYMBOL_HASHSIZE		9973
