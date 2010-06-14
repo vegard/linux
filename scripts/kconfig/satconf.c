@@ -95,8 +95,7 @@ static void bool_printf(struct bool_expr *e)
 		printf("%s", e->nullary ? "T" : "F");
 		break;
 	case VAR:
-		printf("%u", e->var);
-		//printf("%u/%s", e->var, sat_variables[e->var]->name ?: "<unknown>");
+		printf("%u/%s", e->var, sat_variables[e->var]->name ?: "<unknown>");
 		break;
 	case NOT:
 		printf("!");
@@ -469,9 +468,6 @@ static bool build_clauses(void)
 		for_all_prompts(sym, prop) {
 			struct bool_expr *e;
 
-			/* XXX: ??? */
-			if (!sym->name)
-				continue;
 			if (!prop->visible.expr)
 				continue;
 
@@ -485,10 +481,6 @@ static bool build_clauses(void)
 		for_all_properties(sym, prop, P_SELECT) {
 			struct bool_expr *e;
 
-			/* XXX: ??? */
-			if (!sym->name)
-				continue;
-
 			e = bool_dep(bool_var(sym->sat_variable),
 				     expr_to_bool_expr(sym, prop->expr));
 			if (!bool_to_clauses(bool_to_cnf(e)))
@@ -497,31 +489,6 @@ static bool build_clauses(void)
 	}
 
 	return true;
-}
-
-/* XXX: For debugging purposes only! */
-static void check_conf(void)
-{
-	unsigned int i;
-	struct symbol *sym;
-	struct property *prop;
-
-	for_all_symbols(i, sym) {
-		if (sym->name)
-			continue;
-
-		for_all_prompts(sym, prop) {
-			if (!prop->file)
-				continue;
-
-			printf("symbol defined at %s:%d has no name\n",
-				prop->file->name, prop->file->lineno);
-		}
-
-		printf("reverse dependencies: ");
-		expr_fprint(sym->rev_dep.expr, stdout);
-		printf("\n");
-	}
 }
 
 int main(int argc, char *argv[])
@@ -556,9 +523,6 @@ int main(int argc, char *argv[])
 				sym->curr = sym->def[S_DEF_USER];
 		}
 	}
-
-	if (false)
-		check_conf();
 
 	assign_sat_variables();
 	picosat_adjust(nr_sat_variables);
@@ -635,9 +599,6 @@ int main(int argc, char *argv[])
 					sym->curr.tri = mod;
 			}
 
-#if 0
-			sym->def[S_DEF_USER] = sym->curr;
-#endif
 			sym->flags |= SYMBOL_VALID;
 			sym->flags |= SYMBOL_WRITE;
 		}
