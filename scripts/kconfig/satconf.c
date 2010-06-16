@@ -719,6 +719,19 @@ int main(int argc, char *argv[])
 	}
 
 	{
+		/* First do a check to see if the instance is solvable
+		 * without any assumptions. If this is not the case, then
+		 * something is weird with the kconfig files. */
+		int sat = picosat_sat(-1);
+		unsigned int i;
+
+		if (sat != PICOSAT_SATISFIABLE) {
+			fprintf(stderr, "error: inconsistent kconfig files\n");
+			exit(EXIT_FAILURE);
+		}
+	}
+
+	{
 		/* Use assumptions */
 		unsigned int i;
 		struct symbol *sym;
@@ -747,15 +760,8 @@ int main(int argc, char *argv[])
 		int sat = picosat_sat(-1);
 		unsigned int i;
 
-		if (sat == PICOSAT_UNKNOWN) {
-			fprintf(stderr, "error: inconsistent kconfig files "
-				"(unsatisfiable instance?)\n");
-			exit(EXIT_FAILURE);
-		}
-
-		if (sat == PICOSAT_UNSATISFIABLE) {
-			fprintf(stderr, "error: inconsistent kconfig files "
-				"(unsatisfiable instance)\n");
+		if (sat != PICOSAT_SATISFIABLE) {
+			fprintf(stderr, "error: unsatisfiable constraints\n");
 			exit(EXIT_FAILURE);
 		}
 
