@@ -151,12 +151,17 @@ static struct bool_expr *bool_or(struct bool_expr *a, struct bool_expr *b);
 
 static struct bool_expr *bool_const(bool v)
 {
-	struct bool_expr *e = malloc(sizeof(*e));
-	assert(e);
+	static struct bool_expr bool_true = {
+		.op = CONST,
+		{ .nullary = true, },
+	};
 
-	e->op = CONST;
-	e->nullary = v;
-	return e;
+	static struct bool_expr bool_false = {
+		.op = CONST,
+		{ .nullary = false, },
+	};
+
+	return v ? &bool_true : &bool_false;
 }
 
 static struct bool_expr *bool_var(unsigned int var)
