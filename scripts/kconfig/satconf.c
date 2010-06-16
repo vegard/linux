@@ -697,6 +697,21 @@ int main(int argc, char *argv[])
 	assign_sat_variables();
 	picosat_adjust(nr_sat_variables);
 
+	{
+		/* Modules are preferred over built-ins; tell that to the
+		 * solver. XXX: This is rather fragile, there is a
+		 * possibility that this can all go away when proper
+		 * support for default values has been added. */
+		unsigned int i;
+		struct symbol *sym;
+		for_all_symbols(i, sym) {
+			if (sym->type != S_TRISTATE)
+				continue;
+
+			picosat_set_default_phase_lit(sym->sat_variable + 1, 1);
+		}
+	}
+
 	if (!build_clauses()) {
 		fprintf(stderr, "error: inconsistent kconfig files while "
 			"building clauses\n");
