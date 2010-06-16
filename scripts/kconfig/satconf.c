@@ -246,6 +246,7 @@ static struct bool_expr *bool_eq(struct bool_expr *a, struct bool_expr *b)
 	return bool_or(bool_and(a, b), bool_and(bool_not(a), bool_not(b)));
 }
 
+#if 0
 static struct bool_expr *equal_expr_to_bool_expr(struct symbol *left, struct symbol *right)
 {
 	assert(left != &symbol_no);
@@ -357,6 +358,177 @@ static struct bool_expr *expr_to_bool_expr(struct symbol *lhs, struct expr *e)
 
 	assert(false);
 }
+#endif
+
+static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_expr *result[2]);
+
+static void symbol_to_bool_expr(struct symbol *sym, struct bool_expr *result[2])
+{
+	if (sym == &symbol_no) {
+		result[0] = bool_const(false);
+		result[1] = bool_const(false);
+		return;
+	}
+
+	if (sym == &symbol_mod) {
+		result[0] = bool_const(true);
+		result[1] = bool_const(true);
+		return;
+	}
+
+	if (sym == &symbol_yes) {
+		result[0] = bool_const(true);
+		result[1] = bool_const(false);
+		return;
+	}
+
+	switch (sym->type) {
+	case S_BOOLEAN:
+		result[0] = bool_var(sym->sat_variable);
+		result[1] = bool_const(false);
+		break;
+	case S_TRISTATE:
+		result[0] = bool_var(sym->sat_variable);
+		result[1] = bool_var(sym->sat_variable + 1);
+		break;
+	default:
+		assert(false);
+	}
+}
+
+static void or_expr_to_bool_expr(struct symbol *lhs,
+	struct expr *in_a, struct expr *in_b, struct bool_expr *out[2])
+{
+	struct bool_expr *a[2];
+	struct bool_expr *b[2];
+
+	expr_to_bool_expr(lhs, in_a, a);
+	expr_to_bool_expr(lhs, in_b, b);
+
+	out[0] = bool_or(bool_or(a[0], a[1]), bool_or(b[0], b[1]));
+	out[1] = bool_and(bool_or(a[1], b[1]),
+		bool_and(bool_dep(a[0], a[1]), bool_dep(b[0], b[1])));
+}
+
+static void and_expr_to_bool_expr(struct symbol *lhs,
+	struct expr *in_a, struct expr *in_b, struct bool_expr *out[2])
+{
+	struct bool_expr *a[2];
+	struct bool_expr *b[2];
+
+	expr_to_bool_expr(lhs, in_a, a);
+	expr_to_bool_expr(lhs, in_b, b);
+
+	out[0] = bool_and(a[0], b[0]);
+	out[1] = bool_or(bool_and(a[0], b[1]),
+			bool_and(a[1], b[0]));
+}
+
+static void not_expr_to_bool_expr(struct symbol *lhs,
+	struct expr *in, struct bool_expr *out[2])
+{
+	struct bool_expr *e[2];
+
+	expr_to_bool_expr(lhs, in, e);
+
+	out[0] = bool_dep(e[0], e[1]);
+	out[1] = e[1];
+}
+
+static struct bool_expr *equal_expr_to_bool_expr(struct symbol *in_a, struct symbol *in_b)
+{
+	switch (in_a->type) {
+	case S_UNKNOWN:
+		/* XXX */
+		return bool_const(in_a == in_b);
+	case S_BOOLEAN:
+	case S_TRISTATE:
+	{
+		struct bool_expr *a[2];
+		struct bool_expr *b[2];
+
+		symbol_to_bool_expr(in_a, a);
+		symbol_to_bool_expr(in_b, b);
+
+		return bool_and(bool_eq(a[0], b[0]), bool_eq(a[1], b[1]));
+	}
+	case S_INT:
+	case S_HEX:
+	case S_STRING: {
+		const char *a_str = sym_get_string_value(in_a);
+		const char *b_str = sym_get_string_value(in_b);
+
+		if (!a_str || !b_str) {
+			fprintf(stderr, "warning: Undefined value for string: %s\n", in_a->name);
+			return bool_const(false);
+		}
+
+		return bool_const(strcmp(a_str, b_str) == 0);
+	}
+	default:
+		printf("%d %d\n", in_a->type, in_b->type);
+		assert(false);
+	}
+}
+
+static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_expr *result[2])
+{
+	switch (e->type) {
+	case E_OR:
+		or_expr_to_bool_expr(lhs, e->left.expr, e->right.expr, result);
+		return;
+	case E_AND:
+		and_expr_to_bool_expr(lhs, e->left.expr, e->right.expr, result);
+		return;
+	case E_NOT:
+		not_expr_to_bool_expr(lhs, e->left.expr, result);
+		return;
+	case E_EQUAL:
+		result[0] = equal_expr_to_bool_expr(e->left.sym, e->right.sym);
+		result[1] = bool_const(false);
+		return;
+	case E_UNEQUAL:
+		result[0] = bool_not(equal_expr_to_bool_expr(e->left.sym, e->right.sym));
+		result[1] = bool_const(false);
+		return;
+	case E_LIST:
+		break;
+	case E_SYMBOL:
+		/* This is a special case. If you "depend on m", it means
+		 * that the value of the left-hand side symbol can only be
+		 * "m" or "n". */
+		if (e->left.sym == &symbol_mod) {
+			assert(lhs->type == S_TRISTATE);
+
+			result[0] = bool_dep(bool_var(lhs->sat_variable),
+				bool_var(lhs->sat_variable + 1));
+			result[1] = bool_const(false);
+			return;
+		}
+
+		/* An undefined symbol typically means that something was
+		 * defined only in some architectures' kconfig files, but
+		 * was referenced in an arch-independent kconfig files.
+		 *
+		 * Assume it to be false. */
+		if (!e->left.sym->name || e->left.sym->type == S_UNKNOWN) {
+			result[0] = bool_const(false);
+			result[1] = bool_const(false);
+			return;
+		}
+
+		result[0] = bool_var(e->left.sym->sat_variable);
+		result[1] = bool_const(false);
+		return;
+	case E_RANGE:
+		break;
+	default:
+		assert(false);
+	}
+
+	printf("%d\n", e->type);
+	assert(false);
+}
 
 static struct bool_expr *bool_to_cnf(struct bool_expr *e)
 {
@@ -464,26 +636,24 @@ static bool build_clauses(void)
 				return false;
 		}
 
-		/* Add dependencies */
+		/* Add "depends on" dependencies */
 		for_all_prompts(sym, prop) {
-			struct bool_expr *e;
+			struct bool_expr *e[2];
 
 			if (!prop->visible.expr)
 				continue;
 
-			e = bool_dep(bool_var(sym->sat_variable),
-				     expr_to_bool_expr(sym, prop->visible.expr));
-			if (!bool_to_clauses(bool_to_cnf(e)))
+			expr_to_bool_expr(sym, prop->visible.expr, e);
+			if (!bool_to_clauses(bool_to_cnf(bool_dep(bool_var(sym->sat_variable), e[0]))))
 				return false;
 		}
 
 		/* Add "select" dependencies */
 		for_all_properties(sym, prop, P_SELECT) {
-			struct bool_expr *e;
+			struct bool_expr *e[2];
 
-			e = bool_dep(bool_var(sym->sat_variable),
-				     expr_to_bool_expr(sym, prop->expr));
-			if (!bool_to_clauses(bool_to_cnf(e)))
+			expr_to_bool_expr(sym, prop->expr, e);
+			if (!bool_to_clauses(bool_to_cnf(bool_dep(bool_var(sym->sat_variable), e[0]))))
 				return false;
 		}
 	}
