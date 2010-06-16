@@ -72,7 +72,6 @@ enum bool_op {
 	OR,
 };
 
-/* XXX: Reference count */
 struct bool_expr {
 	enum bool_op op;
 
@@ -86,7 +85,63 @@ struct bool_expr {
 			struct bool_expr *b;
 		} binary;
 	};
+
+	/* The reference counting rules: Every time a pointer is stored in
+	 * a heap structure, it should have its reference count incremented.
+	 * Constructors that take arguments therefore typically increment
+	 * the reference counts of its arguments. Temporary objects (those
+	 * that are constructed only for the purpose of being passed to
+	 * another function) should have their reference count decremented
+	 * before that function returns. */
+	unsigned int refcount;
 };
+
+/* When the program exits, the number of destroyed bools should equal the
+ * number of created bools. This is for leak debugging. */
+static unsigned int nr_bool_created = 0;
+static unsigned int nr_bool_destroyed = 0;
+
+static struct bool_expr *bool_new(enum bool_op op)
+{
+	struct bool_expr *e = malloc(sizeof(*e));
+	assert(e);
+
+	e->op = op;
+	e->refcount = 1;
+
+	++nr_bool_created;
+	return e;
+}
+
+static struct bool_expr *bool_get(struct bool_expr *e)
+{
+	++e->refcount;
+	return e;
+}
+
+static void bool_put(struct bool_expr *e)
+{
+	assert(e->refcount > 0);
+
+	--e->refcount;
+	if (e->refcount == 0) {
+		switch (e->op) {
+		case NOT:
+			bool_put(e->unary);
+			break;
+		case AND:
+		case OR:
+			bool_put(e->binary.a);
+			bool_put(e->binary.b);
+			break;
+		default:
+			break;
+		}
+
+		++nr_bool_destroyed;
+		free(e);
+	}
+}
 
 static void bool_printf(struct bool_expr *e)
 {
@@ -154,22 +209,21 @@ static struct bool_expr *bool_const(bool v)
 	static struct bool_expr bool_true = {
 		.op = CONST,
 		{ .nullary = true, },
+		.refcount = 1,
 	};
 
 	static struct bool_expr bool_false = {
 		.op = CONST,
 		{ .nullary = false, },
+		.refcount = 1,
 	};
 
-	return v ? &bool_true : &bool_false;
+	return bool_get(v ? &bool_true : &bool_false);
 }
 
 static struct bool_expr *bool_var(unsigned int var)
 {
-	struct bool_expr *e = malloc(sizeof(*e));
-	assert(e);
-
-	e->op = VAR;
+	struct bool_expr *e = bool_new(VAR);
 	e->var = var;
 	return e;
 }
@@ -177,11 +231,8 @@ static struct bool_expr *bool_var(unsigned int var)
 static struct bool_expr *bool_not(struct bool_expr *expr)
 {
 	if (expr->op == VAR) {
-		struct bool_expr *e = malloc(sizeof(*e));
-		assert(e);
-
-		e->op = NOT;
-		e->unary = expr;
+		struct bool_expr *e = bool_new(NOT);
+		e->unary = bool_get(expr);
 		return e;
 	}
 
@@ -191,15 +242,35 @@ static struct bool_expr *bool_not(struct bool_expr *expr)
 
 	case NOT:
 		/* !!x => x */
-		return expr->unary;
+		return bool_get(expr->unary);
 
 	case AND:
+	{
 		/* !(a && b) => !a || !b */
-		return bool_or(bool_not(expr->binary.a), bool_not(expr->binary.b));
+		struct bool_expr *t1, *t2, *ret;
+
+		t1 = bool_not(expr->binary.a);
+		t2 = bool_not(expr->binary.b);
+		ret = bool_or(t1, t2);
+
+		bool_put(t1);
+		bool_put(t2);
+		return ret;
+	}
 
 	case OR:
+	{
 		/* !(a || b) => !a && !b */
-		return bool_and(bool_not(expr->binary.a), bool_not(expr->binary.b));
+		struct bool_expr *t1, *t2, *ret;
+
+		t1 = bool_not(expr->binary.a);
+		t2 = bool_not(expr->binary.b);
+		ret = bool_and(t1, t2);
+
+		bool_put(t1);
+		bool_put(t2);
+		return ret;
+	}
 
 	default:
 		assert(false);
@@ -209,38 +280,36 @@ static struct bool_expr *bool_not(struct bool_expr *expr)
 static struct bool_expr *bool_and(struct bool_expr *a, struct bool_expr *b)
 {
 	if (a->op == CONST)
-		return a->nullary ? b : a;
+		return bool_get(a->nullary ? b : a);
 	if (b->op == CONST)
-		return b->nullary ? a : b;
+		return bool_get(b->nullary ? a : b);
 
-	struct bool_expr *e = malloc(sizeof(*e));
-	assert(e);
-
-	e->op = AND;
-	e->binary.a = a;
-	e->binary.b = b;
+	struct bool_expr *e = bool_new(AND);
+	e->binary.a = bool_get(a);
+	e->binary.b = bool_get(b);
 	return e;
 }
 
 static struct bool_expr *bool_or(struct bool_expr *a, struct bool_expr *b)
 {
 	if (a->op == CONST)
-		return a->nullary ? a : b;
+		return bool_get(a->nullary ? a : b);
 	if (b->op == CONST)
-		return b->nullary ? b : a;
+		return bool_get(b->nullary ? b : a);
 
-	struct bool_expr *e = malloc(sizeof(*e));
-	assert(e);
-
-	e->op = OR;
-	e->binary.a = a;
-	e->binary.b = b;
+	struct bool_expr *e = bool_new(OR);
+	e->binary.a = bool_get(a);
+	e->binary.b = bool_get(b);
 	return e;
 }
 
 static struct bool_expr *bool_dep(struct bool_expr *a, struct bool_expr *b)
 {
-	return bool_or(bool_not(a), b);
+	struct bool_expr *t = bool_not(a);
+	struct bool_expr *ret = bool_or(t, b);
+
+	bool_put(t);
+	return ret;
 }
 
 static struct bool_expr *bool_eq(struct bool_expr *a, struct bool_expr *b)
@@ -248,7 +317,17 @@ static struct bool_expr *bool_eq(struct bool_expr *a, struct bool_expr *b)
 	/* XXX: Introduce extra variables */
 
 	/* a == b => (a && b) || (!a && !b) */
-	return bool_or(bool_and(a, b), bool_and(bool_not(a), bool_not(b)));
+	struct bool_expr *t1 = bool_and(a, b);
+	struct bool_expr *t2 = bool_not(a);
+	struct bool_expr *t3 = bool_not(b);
+	struct bool_expr *t4 = bool_and(t2, t3);
+	struct bool_expr *ret = bool_or(t1, t4);
+
+	bool_put(t1);
+	bool_put(t2);
+	bool_put(t3);
+	bool_put(t4);
+	return ret;
 }
 
 #if 0
@@ -388,15 +467,21 @@ static void symbol_to_bool_expr(struct symbol *sym, struct bool_expr *result[2])
 	}
 
 	switch (sym->type) {
+	case S_UNKNOWN:
+		/* XXX: Is this correct? */
+		result[0] = bool_const(false);
+		result[1] = bool_const(false);
+		return;
 	case S_BOOLEAN:
 		result[0] = bool_var(sym->sat_variable);
 		result[1] = bool_const(false);
-		break;
+		return;
 	case S_TRISTATE:
 		result[0] = bool_var(sym->sat_variable);
 		result[1] = bool_var(sym->sat_variable + 1);
-		break;
+		return;
 	default:
+		printf("%s %d\n", sym->name, sym->type);
 		assert(false);
 	}
 }
@@ -406,13 +491,33 @@ static void or_expr_to_bool_expr(struct symbol *lhs,
 {
 	struct bool_expr *a[2];
 	struct bool_expr *b[2];
+	struct bool_expr *t1, *t2, *t3, *t4;
 
 	expr_to_bool_expr(lhs, in_a, a);
 	expr_to_bool_expr(lhs, in_b, b);
 
-	out[0] = bool_or(bool_or(a[0], a[1]), bool_or(b[0], b[1]));
-	out[1] = bool_and(bool_or(a[1], b[1]),
-		bool_and(bool_dep(a[0], a[1]), bool_dep(b[0], b[1])));
+	t1 = bool_or(a[0], a[1]);
+	t2 = bool_or(b[0], b[1]);
+
+	out[0] = bool_or(t1, t2);
+	bool_put(t1);
+	bool_put(t2);
+
+	t1 = bool_or(a[1], b[1]);
+	t2 = bool_dep(a[0], a[1]);
+	t3 = bool_dep(b[0], b[1]);
+	t4 = bool_and(t2, t3);
+
+	out[1] = bool_and(t1, t4);
+	bool_put(t1);
+	bool_put(t2);
+	bool_put(t3);
+	bool_put(t4);
+
+	bool_put(a[0]);
+	bool_put(a[1]);
+	bool_put(b[0]);
+	bool_put(b[1]);
 }
 
 static void and_expr_to_bool_expr(struct symbol *lhs,
@@ -420,13 +525,24 @@ static void and_expr_to_bool_expr(struct symbol *lhs,
 {
 	struct bool_expr *a[2];
 	struct bool_expr *b[2];
+	struct bool_expr *t1, *t2;
 
 	expr_to_bool_expr(lhs, in_a, a);
 	expr_to_bool_expr(lhs, in_b, b);
 
 	out[0] = bool_and(a[0], b[0]);
-	out[1] = bool_or(bool_and(a[0], b[1]),
-			bool_and(a[1], b[0]));
+
+	t1 = bool_and(a[0], b[1]);
+	t2 = bool_and(a[1], b[0]);
+
+	out[1] = bool_or(t1, t2);
+	bool_put(t1);
+	bool_put(t2);
+
+	bool_put(a[0]);
+	bool_put(a[1]);
+	bool_put(b[0]);
+	bool_put(b[1]);
 }
 
 static void not_expr_to_bool_expr(struct symbol *lhs,
@@ -438,6 +554,9 @@ static void not_expr_to_bool_expr(struct symbol *lhs,
 
 	out[0] = bool_dep(e[0], e[1]);
 	out[1] = e[1];
+
+	bool_put(e[0]);
+	/* bool_put(e[1]); */
 }
 
 static struct bool_expr *equal_expr_to_bool_expr(struct symbol *in_a, struct symbol *in_b)
@@ -451,11 +570,22 @@ static struct bool_expr *equal_expr_to_bool_expr(struct symbol *in_a, struct sym
 	{
 		struct bool_expr *a[2];
 		struct bool_expr *b[2];
+		struct bool_expr *t1, *t2, *ret;
 
 		symbol_to_bool_expr(in_a, a);
 		symbol_to_bool_expr(in_b, b);
 
-		return bool_and(bool_eq(a[0], b[0]), bool_eq(a[1], b[1]));
+		t1 = bool_eq(a[0], b[0]);
+		t2 = bool_eq(a[1], b[1]);
+		ret = bool_and(t1, t2);
+
+		bool_put(t1);
+		bool_put(t2);
+		bool_put(a[0]);
+		bool_put(a[1]);
+		bool_put(b[0]);
+		bool_put(b[1]);
+		return ret;
 	}
 	case S_INT:
 	case S_HEX:
@@ -493,21 +623,41 @@ static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_ex
 		result[1] = bool_const(false);
 		return;
 	case E_UNEQUAL:
-		result[0] = bool_not(equal_expr_to_bool_expr(e->left.sym, e->right.sym));
+	{
+		struct bool_expr *t;
+
+		t = equal_expr_to_bool_expr(e->left.sym, e->right.sym);
+		result[0] = bool_not(t);
 		result[1] = bool_const(false);
+		bool_put(t);
 		return;
+	}
 	case E_LIST:
 		break;
 	case E_SYMBOL:
-		/* This is a special case. If you "depend on m", it means
+		if (!lhs) {
+			symbol_to_bool_expr(e->left.sym, result);
+			return;
+		}
+
+		/* This is a special case. If you "depends on m", it means
 		 * that the value of the left-hand side symbol can only be
 		 * "m" or "n". */
+		/* XXX: In the future (when only satconfig is used), we
+		 * should get rid of the "depends on m" special case
+		 * altogether and rewrite those as "depends on SELF=m". */
 		if (e->left.sym == &symbol_mod) {
 			assert(lhs->type == S_TRISTATE);
 
-			result[0] = bool_dep(bool_var(lhs->sat_variable),
-				bool_var(lhs->sat_variable + 1));
+			struct bool_expr *t1, *t2;
+
+			t1 = bool_var(lhs->sat_variable);
+			t2 = bool_var(lhs->sat_variable + 1);
+			result[0] = bool_dep(t1, t2);
 			result[1] = bool_const(false);
+
+			bool_put(t1);
+			bool_put(t2);
 			return;
 		}
 
@@ -539,28 +689,72 @@ static struct bool_expr *bool_to_cnf(struct bool_expr *e)
 {
 	/* XXX: All of this is hugely inefficient */
 	if (e->op == AND) {
-		return bool_and(bool_to_cnf(e->binary.a),
-				bool_to_cnf(e->binary.b));
+		struct bool_expr *t1, *t2, *ret;
+
+		t1 = bool_to_cnf(e->binary.a);
+		t2 = bool_to_cnf(e->binary.b);
+		if (t1 == e->binary.a && t2 == e->binary.b)
+			ret = bool_get(e);
+		else
+			ret = bool_and(t1, t2);
+
+		bool_put(t1);
+		bool_put(t2);
+		return ret;
 	}
 
 	if (e->op == OR) {
 		struct bool_expr *a = bool_to_cnf(e->binary.a);
 		struct bool_expr *b = bool_to_cnf(e->binary.b);
+		struct bool_expr *ret;
 
 		if (a->op == AND) {
-			return bool_and(bool_to_cnf(bool_or(b, a->binary.a)),
-					bool_to_cnf(bool_or(b, a->binary.b)));
+			struct bool_expr *t1, *t2, *t3, *t4;
+
+			t1 = bool_or(b, a->binary.a);
+			t2 = bool_or(b, a->binary.b);
+			t3 = bool_to_cnf(t1);
+			t4 = bool_to_cnf(t2);
+			ret = bool_and(t3, t4);
+
+			bool_put(a);
+			bool_put(b);
+			bool_put(t1);
+			bool_put(t2);
+			bool_put(t3);
+			bool_put(t4);
+			return ret;
 		}
 
 		if (b->op == AND) {
-			return bool_and(bool_to_cnf(bool_or(a, b->binary.a)),
-					bool_to_cnf(bool_or(a, b->binary.b)));
+			struct bool_expr *t1, *t2, *t3, *t4;
+
+			t1 = bool_or(a, b->binary.a);
+			t2 = bool_or(a, b->binary.b);
+			t3 = bool_to_cnf(t1);
+			t4 = bool_to_cnf(t2);
+			ret = bool_and(t3, t4);
+
+			bool_put(a);
+			bool_put(b);
+			bool_put(t1);
+			bool_put(t2);
+			bool_put(t3);
+			bool_put(t4);
+			return ret;
 		}
 
-		return bool_or(a, b);
+		if (a == e->binary.a && b == e->binary.b)
+			ret = bool_get(e);
+		else
+			ret = bool_or(a, b);
+
+		bool_put(a);
+		bool_put(b);
+		return ret;
 	}
 
-	return e;
+	return bool_get(e);
 }
 
 static bool bool_to_clause(struct bool_expr *e)
@@ -626,40 +820,79 @@ static bool build_clauses(void)
 			continue;
 
 		if (sym->type == S_TRISTATE) {
-			struct bool_expr *e;
+			struct bool_expr *t1, *t2, *t3, *t4, *t5;
+
+			t1 = bool_var(sym->sat_variable);
+			t2 = bool_var(sym->sat_variable + 1);
+			t3 = bool_var(modules_sym->sat_variable);
 
 			/* Add the VAR_m -> VAR restriction */
-			e = bool_dep(bool_var(sym->sat_variable + 1),
-				     bool_var(sym->sat_variable));
-			if (!bool_to_clauses(bool_to_cnf(e)))
+			t4 = bool_dep(t2, t1);
+			t5 = bool_to_cnf(t4);
+
+			if (!bool_to_clauses(t5))
 				return false;
 
+			bool_put(t4);
+			bool_put(t5);
+
 			/* Add the VAR_m -> MODULES restriction */
-			e = bool_dep(bool_var(sym->sat_variable + 1),
-				     bool_var(modules_sym->sat_variable));
-			if (!bool_to_clauses(bool_to_cnf(e)))
+			t4 = bool_dep(t2, t3);
+			t5 = bool_to_cnf(t4);
+			if (!bool_to_clauses(t5))
 				return false;
+
+			bool_put(t4);
+			bool_put(t5);
+
+			bool_put(t1);
+			bool_put(t2);
+			bool_put(t3);
 		}
 
 		/* Add "depends on" dependencies */
 		for_all_prompts(sym, prop) {
 			struct bool_expr *e[2];
+			struct bool_expr *t1, *t2, *t3;
 
 			if (!prop->visible.expr)
 				continue;
 
 			expr_to_bool_expr(sym, prop->visible.expr, e);
-			if (!bool_to_clauses(bool_to_cnf(bool_dep(bool_var(sym->sat_variable), e[0]))))
+
+			t1 = bool_var(sym->sat_variable);
+			t2 = bool_dep(t1, e[0]);
+			t3 = bool_to_cnf(t2);
+
+			if (!bool_to_clauses(t3))
 				return false;
+
+			bool_put(e[0]);
+			bool_put(e[1]);
+			bool_put(t1);
+			bool_put(t2);
+			bool_put(t3);
 		}
 
 		/* Add "select" dependencies */
 		for_all_properties(sym, prop, P_SELECT) {
 			struct bool_expr *e[2];
+			struct bool_expr *t1, *t2, *t3;
 
 			expr_to_bool_expr(sym, prop->expr, e);
-			if (!bool_to_clauses(bool_to_cnf(bool_dep(bool_var(sym->sat_variable), e[0]))))
+
+			t1 = bool_var(sym->sat_variable);
+			t2 = bool_dep(t1, e[0]);
+			t3 = bool_to_cnf(t2);
+
+			if (!bool_to_clauses(t3))
 				return false;
+
+			bool_put(e[0]);
+			bool_put(e[1]);
+			bool_put(t1);
+			bool_put(t2);
+			bool_put(t3);
 		}
 	}
 
@@ -722,6 +955,8 @@ int main(int argc, char *argv[])
 			"building clauses\n");
 		exit(EXIT_FAILURE);
 	}
+
+	assert(nr_bool_created == nr_bool_destroyed);
 
 	{
 		/* First do a check to see if the instance is solvable
