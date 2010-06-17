@@ -894,6 +894,53 @@ static bool build_clauses(void)
 			bool_put(t2);
 			bool_put(t3);
 		}
+
+		/* Assign default values to options with no prompt */
+		/* XXX: Do this for non-bool/non-tristate options too */
+		if (!sym_has_prompt(sym)) {
+			struct bool_expr *symbol_value[2];
+			symbol_to_bool_expr(sym, symbol_value);
+
+			struct property *prop;
+			for_all_defaults(sym, prop) {
+				struct bool_expr *condition[2];
+				struct bool_expr *value[2];
+				struct bool_expr *t1, *t2, *t3, *t4, *t5;
+
+				if (prop->menu && prop->menu->dep) {
+					expr_to_bool_expr(sym, prop->menu->dep, condition);
+				} else {
+					condition[0] = bool_const(true);
+					/* Not used */
+					condition[1] = bool_const(false);
+				}
+
+				assert(prop->expr);
+				expr_to_bool_expr(NULL, prop->expr, value);
+
+				t1 = bool_eq(value[0], symbol_value[0]);
+				t2 = bool_eq(value[1], symbol_value[1]);
+				t3 = bool_and(t1, t2);
+				t4 = bool_dep(condition[0], t3);
+				t5 = bool_to_cnf(t4);
+
+				if (!bool_to_clauses(t5))
+					return false;
+
+				bool_put(condition[0]);
+				bool_put(condition[1]);
+				bool_put(value[0]);
+				bool_put(value[1]);
+				bool_put(t1);
+				bool_put(t2);
+				bool_put(t3);
+				bool_put(t4);
+				bool_put(t5);
+			}
+
+			bool_put(symbol_value[0]);
+			bool_put(symbol_value[1]);
+		}
 	}
 
 	return true;

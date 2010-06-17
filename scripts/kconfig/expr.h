@@ -165,6 +165,16 @@ struct property {
 	for (st = sym->prop; st; st = st->next) \
 		if (st->text)
 
+static inline bool sym_has_prompt(struct symbol *sym)
+{
+	struct property *prop;
+
+	for_all_prompts(sym, prop)
+		return true;
+
+	return false;
+}
+
 struct menu {
 	struct menu *next;
 	struct menu *parent;
