@@ -685,72 +685,75 @@ static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_ex
 	assert(false);
 }
 
-static struct bool_expr *bool_to_cnf(struct bool_expr *e)
+static struct bool_expr *cnf_or2(struct bool_expr *tree2, struct bool_expr *leaf)
 {
-	/* XXX: All of this is hugely inefficient */
-	if (e->op == AND) {
-		struct bool_expr *t1, *t2, *ret;
+	struct bool_expr *ret;
 
-		t1 = bool_to_cnf(e->binary.a);
-		t2 = bool_to_cnf(e->binary.b);
-		if (t1 == e->binary.a && t2 == e->binary.b)
-			ret = bool_get(e);
-		else
-			ret = bool_and(t1, t2);
+	if (tree2->op == AND) {
+		struct bool_expr *t1, *t2;
+
+		t1 = cnf_or2(tree2->binary.a, leaf);
+		t2 = cnf_or2(tree2->binary.b, leaf);
+		ret = bool_and(t1, t2);
 
 		bool_put(t1);
 		bool_put(t2);
 		return ret;
 	}
 
+	ret = bool_or(tree2, leaf);
+	return ret;
+}
+
+static struct bool_expr *cnf_or1(struct bool_expr *tree1, struct bool_expr *tree2)
+{
+	struct bool_expr *ret;
+
+	if (tree1->op == AND) {
+		struct bool_expr *t1, *t2;
+
+		t1 = cnf_or1(tree1->binary.a, tree2);
+		t2 = cnf_or1(tree1->binary.b, tree2);
+		ret = bool_and(t1, t2);
+
+		bool_put(t1);
+		bool_put(t2);
+		return ret;
+	}
+
+	ret = cnf_or2(tree2, tree1);
+	return ret;
+}
+
+/* Precondition: Both a and b must be in CNF */
+static struct bool_expr *cnf_or(struct bool_expr *a, struct bool_expr *b)
+{
+	return cnf_or1(a, b);
+}
+
+static struct bool_expr *bool_to_cnf(struct bool_expr *e)
+{
 	if (e->op == OR) {
-		struct bool_expr *a = bool_to_cnf(e->binary.a);
-		struct bool_expr *b = bool_to_cnf(e->binary.b);
-		struct bool_expr *ret;
+		struct bool_expr *t1, *t2, *ret;
 
-		if (a->op == AND) {
-			struct bool_expr *t1, *t2, *t3, *t4;
+		t1 = bool_to_cnf(e->binary.a);
+		t2 = bool_to_cnf(e->binary.b);
+		ret = cnf_or(t1, t2);
 
-			t1 = bool_or(b, a->binary.a);
-			t2 = bool_or(b, a->binary.b);
-			t3 = bool_to_cnf(t1);
-			t4 = bool_to_cnf(t2);
-			ret = bool_and(t3, t4);
+		bool_put(t1);
+		bool_put(t2);
+		return ret;
+	}
 
-			bool_put(a);
-			bool_put(b);
-			bool_put(t1);
-			bool_put(t2);
-			bool_put(t3);
-			bool_put(t4);
-			return ret;
-		}
+	if (e->op == AND) {
+		struct bool_expr *t1, *t2, *ret;
 
-		if (b->op == AND) {
-			struct bool_expr *t1, *t2, *t3, *t4;
+		t1 = bool_to_cnf(e->binary.a);
+		t2 = bool_to_cnf(e->binary.b);
+		ret = bool_and(t1, t2);
 
-			t1 = bool_or(a, b->binary.a);
-			t2 = bool_or(a, b->binary.b);
-			t3 = bool_to_cnf(t1);
-			t4 = bool_to_cnf(t2);
-			ret = bool_and(t3, t4);
-
-			bool_put(a);
-			bool_put(b);
-			bool_put(t1);
-			bool_put(t2);
-			bool_put(t3);
-			bool_put(t4);
-			return ret;
-		}
-
-		if (a == e->binary.a && b == e->binary.b)
-			ret = bool_get(e);
-		else
-			ret = bool_or(a, b);
-
-		bool_put(a);
-		bool_put(b);
+		bool_put(t1);
+		bool_put(t2);
 		return ret;
 	}
 
