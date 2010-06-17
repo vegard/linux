@@ -82,7 +82,7 @@ config BINFMT_SHARED_FLAT
 	  Support FLAT shared libraries
 
 config HAVE_AOUT
-       def_bool n
+       bool
 
 config BINFMT_AOUT
 	tristate "Kernel support for a.out and ECOFF binaries"
