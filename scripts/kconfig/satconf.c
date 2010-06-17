@@ -1000,6 +1000,13 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	{
+		struct symbol *modules_sym = sym_find("MODULES");
+		assert(modules_sym);
+
+		picosat_set_default_phase_lit(modules_sym->sat_variable, 1);
+	}
+
 	if (!build_clauses()) {
 		fprintf(stderr, "error: inconsistent kconfig files while "
 			"building clauses\n");
