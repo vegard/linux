@@ -393,12 +393,12 @@ static void or_expr_to_bool_expr(struct symbol *lhs,
 	bool_put(t1);
 	bool_put(t2);
 
-	t1 = bool_or(a[1], b[1]);
-	t2 = bool_dep(a[0], a[1]);
-	t3 = bool_dep(b[0], b[1]);
+	t1 = bool_and(a[1], b[1]);
+	t2 = bool_dep(b[0], b[1]);
+	t3 = bool_dep(a[0], b[1]);
 	t4 = bool_and(t2, t3);
-
 	out[1] = bool_and(t1, t4);
+
 	bool_put(t1);
 	bool_put(t2);
 	bool_put(t3);
@@ -556,7 +556,7 @@ static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_ex
 		 * was referenced in an arch-independent kconfig files.
 		 *
 		 * Assume it to be false. */
-		if (!e->left.sym->name || e->left.sym->type == S_UNKNOWN) {
+		if (e->left.sym->type == S_UNKNOWN) {
 			result[0] = bool_const(false);
 			result[1] = bool_const(false);
 			return;
@@ -658,6 +658,108 @@ static bool build_clauses(void)
 	for_all_symbols(i, sym) {
 		struct property *prop;
 
+		if (sym->flags & SYMBOL_CHOICE) {
+			struct bool_expr *yes;
+
+			assert(sym->type == S_BOOLEAN || sym->type == S_TRISTATE);
+
+			if (sym->type == S_BOOLEAN) {
+				yes = bool_var(sym->sat_variable);
+			} else if (sym->type == S_TRISTATE) {
+				struct bool_expr *t1, *t2, *t3;
+
+				t1 = bool_var(sym->sat_variable);
+				t2 = bool_var(sym->sat_variable + 1);
+				t3 = bool_not(t2);
+				bool_put(t2);
+				yes = bool_and(t1, t3);
+				bool_put(t1);
+				bool_put(t3);
+			} else {
+				assert(false);
+			}
+
+			/* If the choice block is not optional, then one of
+			 * options must be set. */
+			if (!(sym->flags & SYMBOL_OPTIONAL)) {
+				struct bool_expr *block;
+				struct cnf *block_cnf;
+
+				struct bool_expr *dep;
+
+				/* This is a conjunction of all the choice values */
+				block = bool_const(false);
+
+				for_all_choices(sym, prop) {
+					struct expr *expr;
+					struct symbol *choice;
+
+					assert(prop->expr->type == E_LIST);
+
+					expr_list_for_each_sym(prop->expr, expr, choice) {
+						struct bool_expr *t1, *t2;
+
+						t1 = bool_var(choice->sat_variable);
+						t2 = bool_or(block, t1);
+						bool_put(block);
+						bool_put(t1);
+						block = t2;
+					}
+				}
+
+				dep = bool_dep(yes, block);
+				bool_put(block);
+
+				block_cnf = bool_to_cnf(dep);
+				bool_put(dep);
+
+				add_cnf(block_cnf);
+				cnf_put(block_cnf);
+			}
+
+			for_all_choices(sym, prop) {
+				struct expr *expr, *expr2;
+				struct symbol *choice, *choice2;
+
+				expr_list_for_each_sym(prop->expr, expr, choice) {
+					struct bool_expr *exclusive;
+					struct cnf *exclusive_cnf;
+
+					struct bool_expr *dep;
+
+					exclusive = bool_const(false);
+
+					/* If the choice block =y, then only one option value
+					 * may be selected at the same time. */
+					expr_list_for_each_sym(prop->expr, expr2, choice2) {
+						struct bool_expr *t1, *t2, *t3;
+
+						if (choice2 == choice)
+							continue;
+
+						t1 = bool_var(choice2->sat_variable);
+						t2 = bool_not(t1);
+						bool_put(t1);
+						t3 = bool_or(exclusive, t2);
+						bool_put(exclusive);
+						bool_put(t2);
+						exclusive = t3;
+					}
+
+					dep = bool_dep(yes, exclusive);
+					bool_put(exclusive);
+
+					exclusive_cnf = bool_to_cnf(dep);
+					bool_put(dep);
+
+					add_cnf(exclusive_cnf);
+					cnf_put(exclusive_cnf);
+				}
+			}
+
+			bool_put(yes);
+		}
+
 		if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
 			continue;
 
@@ -672,19 +774,17 @@ static bool build_clauses(void)
 			/* Add the VAR_m -> VAR restriction */
 			t4 = bool_dep(t2, t1);
 			t5 = bool_to_cnf(t4);
+			bool_put(t4);
 
 			add_cnf(t5);
-
-			bool_put(t4);
 			cnf_put(t5);
 
 			/* Add the VAR_m -> MODULES restriction */
 			t4 = bool_dep(t2, t3);
 			t5 = bool_to_cnf(t4);
+			bool_put(t4);
 
 			add_cnf(t5);
-
-			bool_put(t4);
 			cnf_put(t5);
 
 			bool_put(t1);
@@ -705,14 +805,13 @@ static bool build_clauses(void)
 
 			t1 = bool_var(sym->sat_variable);
 			t2 = bool_dep(t1, e[0]);
-			t3 = bool_to_cnf(t2);
-
-			add_cnf(t3);
-
+			bool_put(t1);
 			bool_put(e[0]);
 			bool_put(e[1]);
-			bool_put(t1);
+			t3 = bool_to_cnf(t2);
 			bool_put(t2);
+
+			add_cnf(t3);
 			cnf_put(t3);
 		}
 
@@ -726,14 +825,15 @@ static bool build_clauses(void)
 
 			t1 = bool_var(sym->sat_variable);
 			t2 = bool_dep(t1, e[0]);
-			t3 = bool_to_cnf(t2);
-
-			add_cnf(t3);
-
+			bool_put(t1);
 			bool_put(e[0]);
 			bool_put(e[1]);
-			bool_put(t1);
+			t3 = bool_to_cnf(t2);
+
+
 			bool_put(t2);
+
+			add_cnf(t3);
 			cnf_put(t3);
 		}
 
@@ -763,21 +863,20 @@ static bool build_clauses(void)
 
 				t1 = bool_eq(value[0], symbol_value[0]);
 				t2 = bool_eq(value[1], symbol_value[1]);
-				t3 = bool_and(t1, t2);
-				t4 = bool_dep(condition[0], t3);
-
-				t5 = bool_to_cnf(t4);
-
-				add_cnf(t5);
-
-				bool_put(condition[0]);
-				bool_put(condition[1]);
 				bool_put(value[0]);
 				bool_put(value[1]);
+				t3 = bool_and(t1, t2);
 				bool_put(t1);
 				bool_put(t2);
+				t4 = bool_dep(condition[0], t3);
+				bool_put(condition[0]);
+				bool_put(condition[1]);
 				bool_put(t3);
+
+				t5 = bool_to_cnf(t4);
 				bool_put(t4);
+
+				add_cnf(t5);
 				cnf_put(t5);
 			}
 
@@ -877,6 +976,8 @@ int main(int argc, char *argv[])
 				continue;
 			if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
 				continue;
+			if (sym->flags & SYMBOL_CHOICE)
+				continue;
 
 			switch (sym->curr.tri) {
 			case no:
@@ -887,6 +988,7 @@ int main(int argc, char *argv[])
 				break;
 			case mod:
 				assert(sym->type == S_TRISTATE);
+				picosat_assume(sym->sat_variable);
 				picosat_assume(sym->sat_variable + 1);
 				break;
 			}
