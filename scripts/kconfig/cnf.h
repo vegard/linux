@@ -165,7 +165,7 @@ static inline struct cnf *cnf_and(struct cnf *x, struct cnf *y)
 		cnf_clause_put(t);
 	}
 
-	cnf_for_each_clause(x, i) {
+	cnf_for_each_clause(y, i) {
 		struct cnf_clause *t;
 
 		t = cnf_clause_new(i->positive, i->negative);
