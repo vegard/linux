@@ -730,8 +730,6 @@ static bool build_clauses(void)
 
 			add_cnf(t3);
 
-			str_free(&str);
-
 			bool_put(e[0]);
 			bool_put(e[1]);
 			bool_put(t1);
