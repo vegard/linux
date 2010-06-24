@@ -7,6 +7,8 @@
 #include <unistd.h>
 
 #define LKC_DIRECT_LINK
+#include "bitset.h"
+#include "cnf.h"
 #include "lkc.h"
 #include "picosat.h"
 
@@ -685,128 +687,77 @@ static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_ex
 	assert(false);
 }
 
-static struct bool_expr *cnf_or2(struct bool_expr *tree2, struct bool_expr *leaf)
+static struct cnf *bool_to_cnf(struct bool_expr *e)
 {
-	struct bool_expr *ret;
+	switch (e->op) {
+	case CONST:
+		assert(e->nullary);
+		return cnf_new();
 
-	if (tree2->op == AND) {
-		struct bool_expr *t1, *t2;
+	case VAR:
+		return cnf_new_single_positive(nr_sat_variables, e->var);
 
-		t1 = cnf_or2(tree2->binary.a, leaf);
-		t2 = cnf_or2(tree2->binary.b, leaf);
-		ret = bool_and(t1, t2);
+	case NOT:
+		assert(e->unary->op == VAR);
+		return cnf_new_single_negative(nr_sat_variables, e->unary->var);
 
-		bool_put(t1);
-		bool_put(t2);
+	case AND: {
+		struct cnf *t1, *t2, *ret;
+
+		t1 = bool_to_cnf(e->binary.a);
+		t2 = bool_to_cnf(e->binary.b);
+		ret = cnf_and(t1, t2);
+
+		cnf_put(t1);
+		cnf_put(t2);
 		return ret;
 	}
 
-	ret = bool_or(tree2, leaf);
-	return ret;
-}
-
-static struct bool_expr *cnf_or1(struct bool_expr *tree1, struct bool_expr *tree2)
-{
-	struct bool_expr *ret;
-
-	if (tree1->op == AND) {
-		struct bool_expr *t1, *t2;
-
-		t1 = cnf_or1(tree1->binary.a, tree2);
-		t2 = cnf_or1(tree1->binary.b, tree2);
-		ret = bool_and(t1, t2);
-
-		bool_put(t1);
-		bool_put(t2);
-		return ret;
-	}
-
-	ret = cnf_or2(tree2, tree1);
-	return ret;
-}
-
-/* Precondition: Both a and b must be in CNF */
-static struct bool_expr *cnf_or(struct bool_expr *a, struct bool_expr *b)
-{
-	return cnf_or1(a, b);
-}
-
-static struct bool_expr *bool_to_cnf(struct bool_expr *e)
-{
-	if (e->op == OR) {
-		struct bool_expr *t1, *t2, *ret;
+	case OR: {
+		struct cnf *t1, *t2, *ret;
 
 		t1 = bool_to_cnf(e->binary.a);
 		t2 = bool_to_cnf(e->binary.b);
 		ret = cnf_or(t1, t2);
 
-		bool_put(t1);
-		bool_put(t2);
+		cnf_put(t1);
+		cnf_put(t2);
 		return ret;
 	}
 
-	if (e->op == AND) {
-		struct bool_expr *t1, *t2, *ret;
-
-		t1 = bool_to_cnf(e->binary.a);
-		t2 = bool_to_cnf(e->binary.b);
-		ret = bool_and(t1, t2);
-
-		bool_put(t1);
-		bool_put(t2);
-		return ret;
-	}
-
-	return bool_get(e);
-}
-
-static bool bool_to_clause(struct bool_expr *e)
-{
-	switch (e->op) {
-	case CONST:
-		return e->nullary;
-	case VAR:
-		picosat_add(e->var);
-		return true;
-	case NOT:
-		assert(e->unary->op == VAR);
-		picosat_add(-e->unary->var);
-		return true;
-	case OR:
-		return bool_to_clause(e->binary.a)
-			&& bool_to_clause(e->binary.b);
 	default:
+		printf("%d\n", e->op);
 		assert(false);
 	}
 }
 
-static bool bool_to_clauses(struct bool_expr *e)
+static void add_positive(unsigned int bit)
 {
-	switch (e->op) {
-	case CONST:
-		return e->nullary;
-	case VAR:
-		picosat_add(e->var);
-		picosat_add(0);
-		return true;
-	case NOT:
-		assert(e->unary->op == VAR);
-		picosat_add(-e->unary->var);
-		picosat_add(0);
-		return true;
-	case AND:
-		return bool_to_clauses(e->binary.a)
-			&& bool_to_clauses(e->binary.b);
-	case OR:
-		if (!bool_to_clause(e->binary.a))
-			return false;
-		if (!bool_to_clause(e->binary.b))
-			return false;
-		picosat_add(0);
-		return true;
-	default:
-		assert(false);
-	}
+	picosat_add(bit);
+}
+
+static void add_negative(unsigned int bit)
+{
+	picosat_add(-bit);
+}
+
+static void add_clause(struct cnf_clause *clause)
+{
+
+	if (clause->positive)
+		bitset_call_for_each_bit(clause->positive, &add_positive);
+	if (clause->negative)
+		bitset_call_for_each_bit(clause->negative, &add_negative);
+	picosat_add(0);
+
+}
+
+static void add_cnf(struct cnf *cnf)
+{
+	struct cnf_clause *i;
+
+	for (i = cnf->first; i; i = i->next)
+		add_clause(i);
 }
 
 static bool build_clauses(void)
@@ -823,7 +774,8 @@ static bool build_clauses(void)
 			continue;
 
 		if (sym->type == S_TRISTATE) {
-			struct bool_expr *t1, *t2, *t3, *t4, *t5;
+			struct bool_expr *t1, *t2, *t3, *t4;
+			struct cnf *t5;
 
 			t1 = bool_var(sym->sat_variable);
 			t2 = bool_var(sym->sat_variable + 1);
@@ -833,20 +785,19 @@ static bool build_clauses(void)
 			t4 = bool_dep(t2, t1);
 			t5 = bool_to_cnf(t4);
 
-			if (!bool_to_clauses(t5))
-				return false;
+			add_cnf(t5);
 
 			bool_put(t4);
-			bool_put(t5);
+			cnf_put(t5);
 
 			/* Add the VAR_m -> MODULES restriction */
 			t4 = bool_dep(t2, t3);
 			t5 = bool_to_cnf(t4);
-			if (!bool_to_clauses(t5))
-				return false;
+
+			add_cnf(t5);
 
 			bool_put(t4);
-			bool_put(t5);
+			cnf_put(t5);
 
 			bool_put(t1);
 			bool_put(t2);
@@ -856,7 +807,8 @@ static bool build_clauses(void)
 		/* Add "depends on" dependencies */
 		for_all_prompts(sym, prop) {
 			struct bool_expr *e[2];
-			struct bool_expr *t1, *t2, *t3;
+			struct bool_expr *t1, *t2;
+			struct cnf *t3;
 
 			if (!prop->visible.expr)
 				continue;
@@ -867,20 +819,20 @@ static bool build_clauses(void)
 			t2 = bool_dep(t1, e[0]);
 			t3 = bool_to_cnf(t2);
 
-			if (!bool_to_clauses(t3))
-				return false;
+			add_cnf(t3);
 
 			bool_put(e[0]);
 			bool_put(e[1]);
 			bool_put(t1);
 			bool_put(t2);
-			bool_put(t3);
+			cnf_put(t3);
 		}
 
 		/* Add "select" dependencies */
 		for_all_properties(sym, prop, P_SELECT) {
 			struct bool_expr *e[2];
-			struct bool_expr *t1, *t2, *t3;
+			struct bool_expr *t1, *t2;
+			struct cnf *t3;
 
 			expr_to_bool_expr(sym, prop->expr, e);
 
@@ -888,14 +840,15 @@ static bool build_clauses(void)
 			t2 = bool_dep(t1, e[0]);
 			t3 = bool_to_cnf(t2);
 
-			if (!bool_to_clauses(t3))
-				return false;
+			add_cnf(t3);
+
+			str_free(&str);
 
 			bool_put(e[0]);
 			bool_put(e[1]);
 			bool_put(t1);
 			bool_put(t2);
-			bool_put(t3);
+			cnf_put(t3);
 		}
 
 		/* Assign default values to options with no prompt */
@@ -908,7 +861,8 @@ static bool build_clauses(void)
 			for_all_defaults(sym, prop) {
 				struct bool_expr *condition[2];
 				struct bool_expr *value[2];
-				struct bool_expr *t1, *t2, *t3, *t4, *t5;
+				struct bool_expr *t1, *t2, *t3, *t4;
+				struct cnf *t5;
 
 				if (prop->menu && prop->menu->dep) {
 					expr_to_bool_expr(sym, prop->menu->dep, condition);
@@ -925,10 +879,10 @@ static bool build_clauses(void)
 				t2 = bool_eq(value[1], symbol_value[1]);
 				t3 = bool_and(t1, t2);
 				t4 = bool_dep(condition[0], t3);
+
 				t5 = bool_to_cnf(t4);
 
-				if (!bool_to_clauses(t5))
-					return false;
+				add_cnf(t5);
 
 				bool_put(condition[0]);
 				bool_put(condition[1]);
@@ -938,7 +892,7 @@ static bool build_clauses(void)
 				bool_put(t2);
 				bool_put(t3);
 				bool_put(t4);
-				bool_put(t5);
+				cnf_put(t5);
 			}
 
 			bool_put(symbol_value[0]);
