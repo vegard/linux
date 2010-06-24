@@ -117,6 +117,8 @@ static struct bool_expr *bool_new(enum bool_op op)
 
 static struct bool_expr *bool_get(struct bool_expr *e)
 {
+	assert(e->refcount > 0);
+
 	++e->refcount;
 	return e;
 }
@@ -331,120 +333,6 @@ static struct bool_expr *bool_eq(struct bool_expr *a, struct bool_expr *b)
 	bool_put(t4);
 	return ret;
 }
-
-#if 0
-static struct bool_expr *equal_expr_to_bool_expr(struct symbol *left, struct symbol *right)
-{
-	assert(left != &symbol_no);
-	assert(left != &symbol_yes);
-	assert(left != &symbol_mod);
-
-	if (left->type == S_UNKNOWN) {
-		if (right == &symbol_no)
-			return bool_const(true);
-		if (right == &symbol_yes)
-			return bool_const(false);
-		if (right == &symbol_mod)
-			return bool_const(false);
-
-		assert(false);
-	}
-
-	/* We can't solve for non-boolean variables */
-	if (left->type == S_INT
-		|| left->type == S_HEX
-		|| left->type == S_STRING)
-	{
-		if (!sym_get_string_value(left) || !sym_get_string_value(right)) {
-			fprintf(stderr, "warning: Undefined value for string: %s\n", left->name);
-			return bool_const(false);
-		}
-
-		return bool_const(strcmp(sym_get_string_value(left),
-					 sym_get_string_value(right)) == 0);
-	}
-
-	assert(left->type == S_BOOLEAN
-		|| left->type == S_TRISTATE);
-
-	if (right == &symbol_no)
-		return bool_not(bool_var(left->sat_variable));
-
-	if (right == &symbol_yes)
-		return bool_var(left->sat_variable);
-
-	if (right == &symbol_mod) {
-		assert(left->type == S_TRISTATE);
-		return bool_var(left->sat_variable + 1);
-	}
-
-	if (left->type == S_BOOLEAN) {
-		return bool_eq(bool_var(left->sat_variable),
-			       bool_var(right->sat_variable));
-	}
-
-	if (left->type == S_TRISTATE) {
-		return bool_and(bool_eq(bool_var(left->sat_variable),
-					bool_var(right->sat_variable)),
-				bool_eq(bool_var(left->sat_variable + 1),
-					bool_var(right->sat_variable + 1)));
-	}
-
-	assert(false);
-}
-
-/* Convert a kconfig expression into a purely boolean expression */
-static struct bool_expr *expr_to_bool_expr(struct symbol *lhs, struct expr *e)
-{
-	switch (e->type) {
-	case E_OR:
-		return bool_or(expr_to_bool_expr(lhs, e->left.expr),
-			       expr_to_bool_expr(lhs, e->right.expr));
-	case E_AND:
-		return bool_and(expr_to_bool_expr(lhs, e->left.expr),
-			        expr_to_bool_expr(lhs, e->right.expr));
-	case E_NOT:
-		return bool_not(expr_to_bool_expr(lhs, e->left.expr));
-	case E_EQUAL:
-		return equal_expr_to_bool_expr(e->left.sym, e->right.sym);
-	case E_UNEQUAL:
-		return bool_not(equal_expr_to_bool_expr(e->left.sym, e->right.sym));
-	case E_LIST:
-		break;
-	case E_SYMBOL:
-		/* This is a special case. If you "depend on m", it means
-		 * that the value of the left-hand side symbol can only be
-		 * "m" or "n". */
-		if (e->left.sym == &symbol_mod) {
-			assert(lhs->type == S_TRISTATE);
-
-			/* We already have the VAR_m -> VAR clause, so we
-			 * only need to add VAR -> VAR_m to make it a bi-
-			 * conditional. */
-			return bool_dep(bool_var(lhs->sat_variable),
-					bool_var(lhs->sat_variable + 1));
-		}
-
-		/* An undefined symbol typically means that something was
-		 * defined only in some architectures' kconfig files, but
-		 * was referenced in an arch-independent kconfig files.
-		 *
-		 * Assume it to be false. */
-		if (!e->left.sym->name)
-			return bool_const(false);
-		if (e->left.sym->type == S_UNKNOWN)
-			return bool_const(false);
-
-		return bool_var(e->left.sym->sat_variable);
-	case E_RANGE:
-		break;
-	default:
-		assert(false);
-	}
-
-	assert(false);
-}
-#endif
 
 static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_expr *result[2]);
 
