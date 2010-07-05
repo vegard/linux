@@ -1063,6 +1063,10 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-	printf("ok\n");
+	if (conf_write_autoconf()) {
+		fprintf(stderr, "error: writing configuration\n");
+		exit(EXIT_FAILURE);
+	}
+
 	return EXIT_SUCCESS;
 }
