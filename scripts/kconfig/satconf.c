@@ -837,6 +837,7 @@ static bool build_clauses(void)
 			cnf_put(t3);
 		}
 
+#if 0
 		/* Assign default values to options with no prompt */
 		/* XXX: Do this for non-bool/non-tristate options too */
 		if (!sym_has_prompt(sym)) {
@@ -883,6 +884,7 @@ static bool build_clauses(void)
 			bool_put(symbol_value[0]);
 			bool_put(symbol_value[1]);
 		}
+#endif
 	}
 
 	return true;
