@@ -1812,6 +1812,7 @@ endmenu		# General setup
 
 config HAVE_GENERIC_DMA_COHERENT
 	bool
+	default n
 
 config SLABINFO
 	bool
