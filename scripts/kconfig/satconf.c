@@ -817,24 +817,46 @@ static bool build_clauses(void)
 
 		/* Add "select" dependencies */
 		for_all_properties(sym, prop, P_SELECT) {
+			struct bool_expr *condition[2];
 			struct bool_expr *e[2];
-			struct bool_expr *t1, *t2;
-			struct cnf *t3;
+			struct bool_expr *t1, *t2, *t3;
+			struct cnf *t4;
+
+			/* XXX: The grammar of the kconfig language allows
+			 * constructs like "config FOO select BAR if BAZ",
+			 * where BAZ is an arbitrary expression. Here, FOO
+			 * is the current value of "sym" and BAR can be
+			 * found in prop->expr. However, BAZ is a bit more
+			 * tricky because it inherits the dependencies of
+			 * FOO. This means that what we're doing here is a
+			 * bit redundant -- it would be a LOT better to
+			 * use BAZ only, but there doesn't seem to be a
+			 * way to get it from the kconfig structures at
+			 * the moment. */
+			if (prop->visible.expr) {
+				expr_to_bool_expr(sym, prop->visible.expr, condition);
+			} else {
+				condition[0] = bool_const(true);
+				/* Not used */
+				condition[1] = bool_const(false);
+			}
 
 			expr_to_bool_expr(sym, prop->expr, e);
 
 			t1 = bool_var(sym->sat_variable);
-			t2 = bool_dep(t1, e[0]);
+			t2 = bool_and(t1, condition[0]);
 			bool_put(t1);
+			bool_put(condition[0]);
+			bool_put(condition[1]);
+			t3 = bool_dep(t2, e[0]);
+			bool_put(t2);
 			bool_put(e[0]);
 			bool_put(e[1]);
-			t3 = bool_to_cnf(t2);
+			t4 = bool_to_cnf(t3);
+			bool_put(t3);
 
-
-			bool_put(t2);
-
-			add_cnf(t3);
-			cnf_put(t3);
+			add_cnf(t4);
+			cnf_put(t4);
 		}
 
 #if 0
