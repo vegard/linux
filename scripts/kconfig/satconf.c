@@ -395,13 +395,12 @@ static void add_negative(unsigned int bit)
 
 static void add_clause(struct cnf_clause *clause)
 {
-
 	if (clause->positive)
 		bitset_call_for_each_bit(clause->positive, &add_positive);
 	if (clause->negative)
 		bitset_call_for_each_bit(clause->negative, &add_negative);
-	picosat_add(0);
 
+	picosat_add(0);
 }
 
 static void add_cnf(struct cnf *cnf)
@@ -412,6 +411,225 @@ static void add_cnf(struct cnf *cnf)
 		add_clause(i);
 }
 
+static struct cnf *kconfig_cnf;
+
+static bool build_choice_clauses(struct symbol *sym)
+{
+	struct property *prop;
+	struct bool_expr *yes;
+
+	assert(sym->type == S_BOOLEAN || sym->type == S_TRISTATE);
+
+	if (sym->type == S_BOOLEAN) {
+		yes = bool_var(sym->sat_variable);
+	} else if (sym->type == S_TRISTATE) {
+		struct bool_expr *t1, *t2, *t3;
+
+		t1 = bool_var(sym->sat_variable);
+		t2 = bool_var(sym->sat_variable + 1);
+		t3 = bool_not(t2);
+		bool_put(t2);
+		yes = bool_and(t1, t3);
+		bool_put(t1);
+		bool_put(t3);
+	} else {
+		assert(false);
+	}
+
+	/* If the choice block is not optional, then one of
+	 * options must be set. */
+	if (!(sym->flags & SYMBOL_OPTIONAL)) {
+		struct bool_expr *block;
+		struct cnf *block_cnf;
+
+		struct bool_expr *dep;
+
+		/* This is a conjunction of all the choice values */
+		block = bool_const(false);
+
+		for_all_choices(sym, prop) {
+			struct expr *expr;
+			struct symbol *choice;
+
+			assert(prop->expr->type == E_LIST);
+
+			expr_list_for_each_sym(prop->expr, expr, choice) {
+				struct bool_expr *t1, *t2;
+
+				t1 = bool_var(choice->sat_variable);
+				t2 = bool_or(block, t1);
+				bool_put(block);
+				bool_put(t1);
+				block = t2;
+			}
+		}
+
+		dep = bool_dep(yes, block);
+		bool_put(block);
+
+		block_cnf = bool_to_cnf(dep);
+		bool_put(dep);
+
+		add_cnf(block_cnf);
+		cnf_put(block_cnf);
+	}
+
+	for_all_choices(sym, prop) {
+		struct expr *expr, *expr2;
+		struct symbol *choice, *choice2;
+
+		expr_list_for_each_sym(prop->expr, expr, choice) {
+			struct bool_expr *exclusive;
+			struct cnf *exclusive_cnf;
+
+			struct bool_expr *dep;
+
+			exclusive = bool_const(false);
+
+			/* If the choice block =y, then only one option value
+			 * may be selected at the same time. */
+			expr_list_for_each_sym(prop->expr, expr2, choice2) {
+				struct bool_expr *t1, *t2, *t3;
+
+				if (choice2 == choice)
+					continue;
+
+				t1 = bool_var(choice2->sat_variable);
+				t2 = bool_not(t1);
+				bool_put(t1);
+				t3 = bool_or(exclusive, t2);
+				bool_put(exclusive);
+				bool_put(t2);
+				exclusive = t3;
+			}
+
+			dep = bool_dep(yes, exclusive);
+			bool_put(exclusive);
+
+			exclusive_cnf = bool_to_cnf(dep);
+			bool_put(dep);
+
+			add_cnf(exclusive_cnf);
+			cnf_put(exclusive_cnf);
+		}
+	}
+
+	bool_put(yes);
+
+	return true;
+}
+
+static bool build_tristate_clauses(struct symbol *sym)
+{
+	struct bool_expr *t1, *t2, *t3, *t4;
+	struct cnf *t5;
+
+	t1 = bool_var(sym->sat_variable);
+	t2 = bool_var(sym->sat_variable + 1);
+	t3 = bool_var(modules_sym->sat_variable);
+
+	/* Add the VAR_m -> VAR restriction */
+	t4 = bool_dep(t2, t1);
+	t5 = bool_to_cnf(t4);
+	bool_put(t4);
+
+	add_cnf(t5);
+	cnf_put(t5);
+
+	/* Add the VAR_m -> MODULES restriction */
+	t4 = bool_dep(t2, t3);
+	t5 = bool_to_cnf(t4);
+	bool_put(t4);
+
+	add_cnf(t5);
+	cnf_put(t5);
+
+	bool_put(t1);
+	bool_put(t2);
+	bool_put(t3);
+
+	return true;
+}
+
+static bool build_depends_on_clauses(struct symbol *sym)
+{
+	struct property *prop;
+
+	for_all_prompts(sym, prop) {
+		struct bool_expr *e[2];
+		struct bool_expr *t1, *t2;
+		struct cnf *t3;
+
+		if (!prop->visible.expr)
+			continue;
+
+		expr_to_bool_expr(sym, prop->visible.expr, e);
+
+		t1 = bool_var(sym->sat_variable);
+		t2 = bool_dep(t1, e[0]);
+		bool_put(t1);
+		bool_put(e[0]);
+		bool_put(e[1]);
+		t3 = bool_to_cnf(t2);
+		bool_put(t2);
+
+		add_cnf(t3);
+		cnf_put(t3);
+	}
+
+	return true;
+}
+
+static bool build_select_clauses(struct symbol *sym)
+{
+	struct property *prop;
+
+	for_all_properties(sym, prop, P_SELECT) {
+		struct bool_expr *condition[2];
+		struct bool_expr *e[2];
+		struct bool_expr *t1, *t2, *t3;
+		struct cnf *t4;
+
+		/* XXX: The grammar of the kconfig language allows
+		 * constructs like "config FOO select BAR if BAZ",
+		 * where BAZ is an arbitrary expression. Here, FOO
+		 * is the current value of "sym" and BAR can be
+		 * found in prop->expr. However, BAZ is a bit more
+		 * tricky because it inherits the dependencies of
+		 * FOO. This means that what we're doing here is a
+		 * bit redundant -- it would be a LOT better to
+		 * use BAZ only, but there doesn't seem to be a
+		 * way to get it from the kconfig structures at
+		 * the moment. */
+		if (prop->visible.expr) {
+			expr_to_bool_expr(sym, prop->visible.expr, condition);
+		} else {
+			condition[0] = bool_const(true);
+			/* Not used */
+			condition[1] = bool_const(false);
+		}
+
+		expr_to_bool_expr(sym, prop->expr, e);
+
+		t1 = bool_var(sym->sat_variable);
+		t2 = bool_and(t1, condition[0]);
+		bool_put(t1);
+		bool_put(condition[0]);
+		bool_put(condition[1]);
+		t3 = bool_dep(t2, e[0]);
+		bool_put(t2);
+		bool_put(e[0]);
+		bool_put(e[1]);
+		t4 = bool_to_cnf(t3);
+		bool_put(t3);
+
+		add_cnf(t4);
+		cnf_put(t4);
+	}
+
+	return true;
+}
+
 static bool build_clauses(void)
 {
 	unsigned int i;
@@ -420,259 +638,31 @@ static bool build_clauses(void)
 	assert(modules_sym);
 
 	for_all_symbols(i, sym) {
-		struct property *prop;
-
 		if (sym->flags & SYMBOL_CHOICE) {
-			struct bool_expr *yes;
-
-			assert(sym->type == S_BOOLEAN || sym->type == S_TRISTATE);
-
-			if (sym->type == S_BOOLEAN) {
-				yes = bool_var(sym->sat_variable);
-			} else if (sym->type == S_TRISTATE) {
-				struct bool_expr *t1, *t2, *t3;
-
-				t1 = bool_var(sym->sat_variable);
-				t2 = bool_var(sym->sat_variable + 1);
-				t3 = bool_not(t2);
-				bool_put(t2);
-				yes = bool_and(t1, t3);
-				bool_put(t1);
-				bool_put(t3);
-			} else {
-				assert(false);
-			}
-
-			/* If the choice block is not optional, then one of
-			 * options must be set. */
-			if (!(sym->flags & SYMBOL_OPTIONAL)) {
-				struct bool_expr *block;
-				struct cnf *block_cnf;
-
-				struct bool_expr *dep;
-
-				/* This is a conjunction of all the choice values */
-				block = bool_const(false);
-
-				for_all_choices(sym, prop) {
-					struct expr *expr;
-					struct symbol *choice;
-
-					assert(prop->expr->type == E_LIST);
-
-					expr_list_for_each_sym(prop->expr, expr, choice) {
-						struct bool_expr *t1, *t2;
-
-						t1 = bool_var(choice->sat_variable);
-						t2 = bool_or(block, t1);
-						bool_put(block);
-						bool_put(t1);
-						block = t2;
-					}
-				}
-
-				dep = bool_dep(yes, block);
-				bool_put(block);
-
-				block_cnf = bool_to_cnf(dep);
-				bool_put(dep);
-
-				add_cnf(block_cnf);
-				cnf_put(block_cnf);
-			}
-
-			for_all_choices(sym, prop) {
-				struct expr *expr, *expr2;
-				struct symbol *choice, *choice2;
-
-				expr_list_for_each_sym(prop->expr, expr, choice) {
-					struct bool_expr *exclusive;
-					struct cnf *exclusive_cnf;
-
-					struct bool_expr *dep;
-
-					exclusive = bool_const(false);
-
-					/* If the choice block =y, then only one option value
-					 * may be selected at the same time. */
-					expr_list_for_each_sym(prop->expr, expr2, choice2) {
-						struct bool_expr *t1, *t2, *t3;
-
-						if (choice2 == choice)
-							continue;
-
-						t1 = bool_var(choice2->sat_variable);
-						t2 = bool_not(t1);
-						bool_put(t1);
-						t3 = bool_or(exclusive, t2);
-						bool_put(exclusive);
-						bool_put(t2);
-						exclusive = t3;
-					}
-
-					dep = bool_dep(yes, exclusive);
-					bool_put(exclusive);
-
-					exclusive_cnf = bool_to_cnf(dep);
-					bool_put(dep);
-
-					add_cnf(exclusive_cnf);
-					cnf_put(exclusive_cnf);
-				}
-			}
-
-			bool_put(yes);
+			if (!build_choice_clauses(sym))
+				return false;
 		}
 
 		if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
 			continue;
 
 		if (sym->type == S_TRISTATE) {
-			struct bool_expr *t1, *t2, *t3, *t4;
-			struct cnf *t5;
-
-			t1 = bool_var(sym->sat_variable);
-			t2 = bool_var(sym->sat_variable + 1);
-			t3 = bool_var(modules_sym->sat_variable);
-
-			/* Add the VAR_m -> VAR restriction */
-			t4 = bool_dep(t2, t1);
-			t5 = bool_to_cnf(t4);
-			bool_put(t4);
-
-			add_cnf(t5);
-			cnf_put(t5);
-
-			/* Add the VAR_m -> MODULES restriction */
-			t4 = bool_dep(t2, t3);
-			t5 = bool_to_cnf(t4);
-			bool_put(t4);
-
-			add_cnf(t5);
-			cnf_put(t5);
-
-			bool_put(t1);
-			bool_put(t2);
-			bool_put(t3);
+			if (!build_tristate_clauses(sym))
+				return false;
 		}
 
-		/* Add "depends on" dependencies */
-		for_all_prompts(sym, prop) {
-			struct bool_expr *e[2];
-			struct bool_expr *t1, *t2;
-			struct cnf *t3;
+		if (!build_depends_on_clauses(sym))
+			return false;
 
-			if (!prop->visible.expr)
-				continue;
-
-			expr_to_bool_expr(sym, prop->visible.expr, e);
-
-			t1 = bool_var(sym->sat_variable);
-			t2 = bool_dep(t1, e[0]);
-			bool_put(t1);
-			bool_put(e[0]);
-			bool_put(e[1]);
-			t3 = bool_to_cnf(t2);
-			bool_put(t2);
-
-			add_cnf(t3);
-			cnf_put(t3);
-		}
-
-		/* Add "select" dependencies */
-		for_all_properties(sym, prop, P_SELECT) {
-			struct bool_expr *condition[2];
-			struct bool_expr *e[2];
-			struct bool_expr *t1, *t2, *t3;
-			struct cnf *t4;
-
-			/* XXX: The grammar of the kconfig language allows
-			 * constructs like "config FOO select BAR if BAZ",
-			 * where BAZ is an arbitrary expression. Here, FOO
-			 * is the current value of "sym" and BAR can be
-			 * found in prop->expr. However, BAZ is a bit more
-			 * tricky because it inherits the dependencies of
-			 * FOO. This means that what we're doing here is a
-			 * bit redundant -- it would be a LOT better to
-			 * use BAZ only, but there doesn't seem to be a
-			 * way to get it from the kconfig structures at
-			 * the moment. */
-			if (prop->visible.expr) {
-				expr_to_bool_expr(sym, prop->visible.expr, condition);
-			} else {
-				condition[0] = bool_const(true);
-				/* Not used */
-				condition[1] = bool_const(false);
-			}
-
-			expr_to_bool_expr(sym, prop->expr, e);
-
-			t1 = bool_var(sym->sat_variable);
-			t2 = bool_and(t1, condition[0]);
-			bool_put(t1);
-			bool_put(condition[0]);
-			bool_put(condition[1]);
-			t3 = bool_dep(t2, e[0]);
-			bool_put(t2);
-			bool_put(e[0]);
-			bool_put(e[1]);
-			t4 = bool_to_cnf(t3);
-			bool_put(t3);
-
-			add_cnf(t4);
-			cnf_put(t4);
-		}
-
-#if 0
-		/* Assign default values to options with no prompt */
-		/* XXX: Do this for non-bool/non-tristate options too */
-		if (!sym_has_prompt(sym)) {
-			struct bool_expr *symbol_value[2];
-			symbol_to_bool_expr(sym, symbol_value);
-
-			struct property *prop;
-			for_all_defaults(sym, prop) {
-				struct bool_expr *condition[2];
-				struct bool_expr *value[2];
-				struct bool_expr *t1, *t2, *t3, *t4;
-				struct cnf *t5;
-
-				if (prop->menu && prop->menu->dep) {
-					expr_to_bool_expr(sym, prop->menu->dep, condition);
-				} else {
-					condition[0] = bool_const(true);
-					/* Not used */
-					condition[1] = bool_const(false);
-				}
-
-				assert(prop->expr);
-				expr_to_bool_expr(NULL, prop->expr, value);
-
-				t1 = bool_eq(value[0], symbol_value[0]);
-				t2 = bool_eq(value[1], symbol_value[1]);
-				bool_put(value[0]);
-				bool_put(value[1]);
-				t3 = bool_and(t1, t2);
-				bool_put(t1);
-				bool_put(t2);
-				t4 = bool_dep(condition[0], t3);
-				bool_put(condition[0]);
-				bool_put(condition[1]);
-				bool_put(t3);
-
-				t5 = bool_to_cnf(t4);
-				bool_put(t4);
-
-				add_cnf(t5);
-				cnf_put(t5);
-			}
-
-			bool_put(symbol_value[0]);
-			bool_put(symbol_value[1]);
-		}
-#endif
+		if (!build_select_clauses(sym))
+			return false;
 	}
 
+	return true;
+}
+
+static bool build_default_clauses(void)
+{
 	return true;
 }
 
@@ -734,9 +724,17 @@ int main(int argc, char *argv[])
 		picosat_set_default_phase_lit(modules_sym->sat_variable, 1);
 	}
 
+	kconfig_cnf = bool_to_cnf(bool_const(true));
+
 	if (!build_clauses()) {
 		fprintf(stderr, "error: inconsistent kconfig files while "
 			"building clauses\n");
+		exit(EXIT_FAILURE);
+	}
+
+	if (!build_default_clauses()) {
+		fprintf(stderr, "error: inconsistent kconfig files while "
+			"building default clauses\n");
 		exit(EXIT_FAILURE);
 	}
 
@@ -747,7 +745,6 @@ int main(int argc, char *argv[])
 		 * without any assumptions. If this is not the case, then
 		 * something is weird with the kconfig files. */
 		int sat = picosat_sat(-1);
-		unsigned int i;
 
 		if (sat != PICOSAT_SATISFIABLE) {
 			fprintf(stderr, "error: inconsistent kconfig files\n");
@@ -794,8 +791,6 @@ int main(int argc, char *argv[])
 
 		struct symbol *sym;
 		for_all_symbols(i, sym) {
-			struct property *prop;
-
 			if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
 				continue;
 
