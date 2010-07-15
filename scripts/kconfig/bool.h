@@ -82,8 +82,9 @@ static void bool_put(struct bool_expr *e)
 			break;
 		}
 
-		++nr_bool_destroyed;
 		free(e);
+
+		++nr_bool_destroyed;
 	}
 }
 
