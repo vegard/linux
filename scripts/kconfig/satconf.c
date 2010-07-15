@@ -440,7 +440,6 @@ static bool build_choice_clauses(struct symbol *sym)
 	 * options must be set. */
 	if (!(sym->flags & SYMBOL_OPTIONAL)) {
 		struct bool_expr *block;
-		struct cnf *block_cnf;
 
 		struct bool_expr *dep;
 
@@ -467,11 +466,8 @@ static bool build_choice_clauses(struct symbol *sym)
 		dep = bool_dep(yes, block);
 		bool_put(block);
 
-		block_cnf = bool_to_cnf(dep);
+		cnf_append(kconfig_cnf, bool_to_cnf(dep));
 		bool_put(dep);
-
-		add_cnf(block_cnf);
-		cnf_put(block_cnf);
 	}
 
 	for_all_choices(sym, prop) {
@@ -480,7 +476,6 @@ static bool build_choice_clauses(struct symbol *sym)
 
 		expr_list_for_each_sym(prop->expr, expr, choice) {
 			struct bool_expr *exclusive;
-			struct cnf *exclusive_cnf;
 
 			struct bool_expr *dep;
 
@@ -506,11 +501,8 @@ static bool build_choice_clauses(struct symbol *sym)
 			dep = bool_dep(yes, exclusive);
 			bool_put(exclusive);
 
-			exclusive_cnf = bool_to_cnf(dep);
+			cnf_append(kconfig_cnf, bool_to_cnf(dep));
 			bool_put(dep);
-
-			add_cnf(exclusive_cnf);
-			cnf_put(exclusive_cnf);
 		}
 	}
 
@@ -522,7 +514,6 @@ static bool build_choice_clauses(struct symbol *sym)
 static bool build_tristate_clauses(struct symbol *sym)
 {
 	struct bool_expr *t1, *t2, *t3, *t4;
-	struct cnf *t5;
 
 	t1 = bool_var(sym->sat_variable);
 	t2 = bool_var(sym->sat_variable + 1);
@@ -530,19 +521,13 @@ static bool build_tristate_clauses(struct symbol *sym)
 
 	/* Add the VAR_m -> VAR restriction */
 	t4 = bool_dep(t2, t1);
-	t5 = bool_to_cnf(t4);
+	cnf_append(kconfig_cnf, bool_to_cnf(t4));
 	bool_put(t4);
-
-	add_cnf(t5);
-	cnf_put(t5);
 
 	/* Add the VAR_m -> MODULES restriction */
 	t4 = bool_dep(t2, t3);
-	t5 = bool_to_cnf(t4);
+	cnf_append(kconfig_cnf, bool_to_cnf(t4));
 	bool_put(t4);
-
-	add_cnf(t5);
-	cnf_put(t5);
 
 	bool_put(t1);
 	bool_put(t2);
@@ -558,7 +543,6 @@ static bool build_depends_on_clauses(struct symbol *sym)
 	for_all_prompts(sym, prop) {
 		struct bool_expr *e[2];
 		struct bool_expr *t1, *t2;
-		struct cnf *t3;
 
 		if (!prop->visible.expr)
 			continue;
@@ -570,11 +554,9 @@ static bool build_depends_on_clauses(struct symbol *sym)
 		bool_put(t1);
 		bool_put(e[0]);
 		bool_put(e[1]);
-		t3 = bool_to_cnf(t2);
-		bool_put(t2);
 
-		add_cnf(t3);
-		cnf_put(t3);
+		cnf_append(kconfig_cnf, bool_to_cnf(t2));
+		bool_put(t2);
 	}
 
 	return true;
@@ -588,7 +570,6 @@ static bool build_select_clauses(struct symbol *sym)
 		struct bool_expr *condition[2];
 		struct bool_expr *e[2];
 		struct bool_expr *t1, *t2, *t3;
-		struct cnf *t4;
 
 		/* XXX: The grammar of the kconfig language allows
 		 * constructs like "config FOO select BAR if BAZ",
@@ -620,11 +601,9 @@ static bool build_select_clauses(struct symbol *sym)
 		bool_put(t2);
 		bool_put(e[0]);
 		bool_put(e[1]);
-		t4 = bool_to_cnf(t3);
-		bool_put(t3);
 
-		add_cnf(t4);
-		cnf_put(t4);
+		cnf_append(kconfig_cnf, bool_to_cnf(t3));
+		bool_put(t3);
 	}
 
 	return true;
@@ -732,6 +711,9 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
+	add_cnf(kconfig_cnf);
+	cnf_put(kconfig_cnf);
+
 	if (!build_default_clauses()) {
 		fprintf(stderr, "error: inconsistent kconfig files while "
 			"building default clauses\n");
@@ -739,6 +721,7 @@ int main(int argc, char *argv[])
 	}
 
 	assert(nr_bool_created == nr_bool_destroyed);
+	assert(nr_cnf_created == nr_cnf_destroyed);
 
 	{
 		/* First do a check to see if the instance is solvable
