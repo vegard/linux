@@ -71,6 +71,22 @@ static inline void cnf_init(struct cnf *cnf)
 	cnf->last = NULL;
 }
 
+static unsigned int nr_cnf_created = 0;
+static unsigned int nr_cnf_destroyed = 0;
+
+static inline struct cnf *cnf_new(void)
+{
+	struct cnf *r;
+
+	r = malloc(sizeof(*r));
+	if (!r)
+		return r; 
+
+	cnf_init(r);
+	++nr_cnf_created;
+	return r;
+}
+
 static inline struct cnf *cnf_get(struct cnf *cnf)
 {
 	assert(cnf->refcount > 0);
@@ -92,19 +108,9 @@ static inline void cnf_put(struct cnf *cnf)
 		}
 
 		free(cnf);
+
+		++nr_cnf_destroyed;
 	}
-}
-
-static inline struct cnf *cnf_new(void)
-{
-	struct cnf *r;
-
-	r = malloc(sizeof(*r));
-	if (!r)
-		return r; 
-
-	cnf_init(r);
-	return r;
 }
 
 static inline void cnf_add_clause(struct cnf *cnf, struct cnf_clause *clause)
@@ -146,6 +152,25 @@ static inline struct cnf *cnf_new_single_negative(unsigned int size, unsigned in
 	bitset_put(t1);
 	cnf_clause_put(t2);
 	return cnf;
+}
+
+/* Append y to x, destroying y in the process (it must not be shared). */
+static inline void cnf_append(struct cnf *x, struct cnf *y)
+{
+	assert(y->refcount == 1);
+
+	if (x->first)
+		x->last->next = y->first;
+	else
+		x->first = y->first;
+
+	if (y->last)
+		x->last = y->last;
+
+	y->first = NULL;
+	y->last = NULL;
+
+	cnf_put(y);
 }
 
 static inline struct cnf *cnf_and(struct cnf *x, struct cnf *y)
