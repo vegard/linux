@@ -640,8 +640,151 @@ static bool build_clauses(void)
 	return true;
 }
 
+struct clause_to_bool_callback_data {
+	struct bool_expr *expr;
+	unsigned int except;
+};
+
+static void clause_to_bool_positive_callback(void *priv, unsigned int bit)
+{
+	struct clause_to_bool_callback_data *data;
+	struct bool_expr *t1, *t2;
+
+	data = priv;
+	if (bit == data->except)
+		return;
+
+	t1 = data->expr;
+	t2 = bool_var(bit);
+	data->expr = bool_and(t1, t2);
+	bool_put(t1);
+	bool_put(t2);
+}
+
+static void clause_to_bool_negative_callback(void *priv, unsigned int bit)
+{
+	struct clause_to_bool_callback_data *data;
+	struct bool_expr *t1, *t2, *t3;
+
+	data = priv;
+	if (bit == data->except)
+		return;
+
+	t1 = data->expr;
+	t2 = bool_var(bit);
+	t3 = bool_not(t2);
+	bool_put(t2);
+	data->expr = bool_and(t1, t3);
+	bool_put(t1);
+	bool_put(t3);
+}
+
+static struct bool_expr *clause_to_bool_except(struct cnf_clause *clause, unsigned int except)
+{
+	struct clause_to_bool_callback_data data;
+
+	data.expr = bool_const(true);
+	data.except = except;
+
+	if (clause->positive) {
+		bitset_call_for_each_bit(clause->positive,
+			&clause_to_bool_positive_callback, &data);
+	}
+
+	if (clause->negative) {
+		bitset_call_for_each_bit(clause->negative,
+			&clause_to_bool_negative_callback, &data);
+	}
+
+	return data.expr;
+}
+
 static bool build_default_clauses(void)
 {
+	unsigned int i;
+	struct symbol *sym;
+	struct cnf_clause *j;
+
+	/* XXX: This is O(N * M) where N is the number of variables
+	 * and M is the number of clauses. Optimise. */
+	for_all_symbols(i, sym) {
+		struct property *prop;
+		struct bool_expr *symbol_value[2];
+
+		if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
+			continue;
+
+		/* XXX: ? */
+		if (sym_has_prompt(sym))
+			continue;
+		if (!sym->name)
+			continue;
+
+		symbol_to_bool_expr(sym, symbol_value);
+
+		for_all_defaults(sym, prop) {
+			struct bool_expr *menu_cond[2];
+			struct bool_expr *cond;
+			struct bool_expr *value[2];
+			struct bool_expr *t1, *t2, *t3, *t4, *t5;
+			struct cnf *cnf;
+
+			if (prop->menu && prop->menu->dep) {
+				expr_to_bool_expr(sym, prop->menu->dep, menu_cond);
+			} else {
+				menu_cond[0] = bool_const(true);
+				menu_cond[1] = bool_const(false);
+			}
+
+			cond = bool_const(false);
+
+			for (j = kconfig_cnf->first; j; j = j->next) {
+				struct bool_expr *old_cond;
+				struct bool_expr *conj;
+
+				if (j->positive && bitset_test(j->positive, sym->sat_variable)) {
+					conj = clause_to_bool_except(j, sym->sat_variable);
+				} else if (j->negative && bitset_test(j->negative, sym->sat_variable)) {
+					conj = clause_to_bool_except(j, sym->sat_variable);
+				} else
+					continue;
+
+				cond = bool_or(old_cond = cond, conj);
+				bool_put(old_cond);
+				bool_put(conj);
+			}
+
+			assert(prop->expr);
+			expr_to_bool_expr(NULL, prop->expr, value);
+
+			t1 = bool_eq(value[0], symbol_value[0]);
+			t2 = bool_eq(value[1], symbol_value[1]);
+			bool_put(value[0]);
+			bool_put(value[1]);
+			t3 = bool_and(t1, t2);
+			bool_put(t1);
+			bool_put(t2);
+
+			t4 = bool_and(menu_cond[0], cond);
+			bool_put(menu_cond[0]);
+			bool_put(menu_cond[1]);
+			bool_put(cond);
+
+			t5 = bool_dep(t4, t3);
+			bool_put(t4);
+			bool_put(t3);
+
+			cnf = bool_to_cnf(t5);
+			add_cnf(cnf);
+			cnf_put(cnf);
+
+			bool_put(t5);
+		}
+
+		bool_put(symbol_value[0]);
+		bool_put(symbol_value[1]);
+	}
+
 	return true;
 }
 
@@ -712,13 +855,14 @@ int main(int argc, char *argv[])
 	}
 
 	add_cnf(kconfig_cnf);
-	cnf_put(kconfig_cnf);
 
 	if (!build_default_clauses()) {
 		fprintf(stderr, "error: inconsistent kconfig files while "
 			"building default clauses\n");
 		exit(EXIT_FAILURE);
 	}
+
+	cnf_put(kconfig_cnf);
 
 	assert(nr_bool_created == nr_bool_destroyed);
 	assert(nr_cnf_created == nr_cnf_destroyed);
