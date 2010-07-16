@@ -268,6 +268,42 @@ static inline void bitset_set(struct bitset *bitset, unsigned int index)
 		bitset->real_size / BITSET_NR_CHILDREN_PER_NODE, index);
 }
 
+static inline bool bitset_leaf_test(bitset_unit *data, unsigned int mask, unsigned int index)
+{
+	unsigned int i = index / mask;
+	unsigned int j = index % mask;
+
+	return data[i] & (bitset_unit) 1 << j;
+}
+
+static inline bool bitset_node_test(struct bitset_node *node,
+	unsigned int level, unsigned int mask, unsigned int index)
+{
+	if (level == 0) {
+		unsigned int i = index / mask;
+
+		if (!node->data[i])
+			return false;
+
+		return bitset_leaf_test(node->data[i],
+			mask / BITSET_NR_UNITS_PER_LEAF, index % mask);
+	} else {
+		unsigned int i = index / mask;
+
+		if (!node->children[i])
+			return false;
+
+		return bitset_node_test(node->children[i],
+			level - 1, mask / BITSET_NR_CHILDREN_PER_NODE, index % mask);
+	}
+}
+
+static inline bool bitset_test(struct bitset *bitset, unsigned int index)
+{
+	return bitset_node_test(&bitset->root, bitset->levels - 1,
+		bitset->real_size / BITSET_NR_CHILDREN_PER_NODE, index);
+}
+
 static inline struct bitset *bitset_new_single(unsigned int size, unsigned int bit)
 {
 	struct bitset *bitset;
