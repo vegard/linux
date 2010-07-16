@@ -437,7 +437,8 @@ static inline struct bitset *bitset_union(struct bitset *x, struct bitset *y)
 }
 
 static inline void bitset_leaf_call_for_each_bit(bitset_unit *data,
-	unsigned int offset, void (*func)(unsigned int))
+	unsigned int offset,
+	void (*func)(void *, unsigned int), void *priv)
 {
 	unsigned int i;
 
@@ -449,7 +450,7 @@ static inline void bitset_leaf_call_for_each_bit(bitset_unit *data,
 
 		for (j = 0; j < bitset_bits_per_unit; ++j) {
 			if (data[i] & ((bitset_unit) 1 << j)) {
-				func(BITSET_NR_UNITS_PER_LEAF * bitset_bits_per_unit
+				func(priv, BITSET_NR_UNITS_PER_LEAF * bitset_bits_per_unit
 					* offset + bitset_bits_per_unit * i + j);
 			}
 		}
@@ -457,7 +458,8 @@ static inline void bitset_leaf_call_for_each_bit(bitset_unit *data,
 }
 
 static inline void bitset_node_call_for_each_bit(struct bitset_node *node,
-	unsigned int level, unsigned int offset, void (*func)(unsigned int))
+	unsigned int level, unsigned int offset,
+	void (*func)(void *, unsigned int), void *priv)
 {
 	unsigned int i;
 
@@ -467,20 +469,20 @@ static inline void bitset_node_call_for_each_bit(struct bitset_node *node,
 	if (level == 0) {
 		for (i = 0; i < BITSET_NR_CHILDREN_PER_NODE; ++i) {
 			bitset_leaf_call_for_each_bit(node->data[i],
-				offset * BITSET_NR_CHILDREN_PER_NODE + i, func);
+				offset * BITSET_NR_CHILDREN_PER_NODE + i, func, priv);
 		}
 	} else {
 		for (i = 0; i < BITSET_NR_CHILDREN_PER_NODE; ++i) {
 			bitset_node_call_for_each_bit(node->children[i], level - 1,
-				offset * BITSET_NR_CHILDREN_PER_NODE + i, func);
+				offset * BITSET_NR_CHILDREN_PER_NODE + i, func, priv);
 		}
 	}
 }
 
 static inline void bitset_call_for_each_bit(struct bitset *bitset,
-	void (*func)(unsigned int))
+	void (*func)(void *, unsigned int), void *priv)
 {
-	bitset_node_call_for_each_bit(&bitset->root, bitset->levels - 1, 0, func);
+	bitset_node_call_for_each_bit(&bitset->root, bitset->levels - 1, 0, func, priv);
 }
 
 #endif

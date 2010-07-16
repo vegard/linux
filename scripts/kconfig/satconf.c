@@ -383,12 +383,12 @@ static struct cnf *bool_to_cnf(struct bool_expr *e)
 	}
 }
 
-static void add_positive(unsigned int bit)
+static void add_positive(void *priv, unsigned int bit)
 {
 	picosat_add(bit);
 }
 
-static void add_negative(unsigned int bit)
+static void add_negative(void *priv, unsigned int bit)
 {
 	picosat_add(-bit);
 }
@@ -396,9 +396,9 @@ static void add_negative(unsigned int bit)
 static void add_clause(struct cnf_clause *clause)
 {
 	if (clause->positive)
-		bitset_call_for_each_bit(clause->positive, &add_positive);
+		bitset_call_for_each_bit(clause->positive, &add_positive, NULL);
 	if (clause->negative)
-		bitset_call_for_each_bit(clause->negative, &add_negative);
+		bitset_call_for_each_bit(clause->negative, &add_negative, NULL);
 
 	picosat_add(0);
 }
