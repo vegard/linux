@@ -1,0 +1,274 @@
+Written by: Vegard Nossum <vegardno@ifi.uio.no>
+
+
+Introduction
+------------
+
+This document describes how the constraints of the kconfig language are 
+translated into a system of boolean constraints.
+
+
+Contents
+--------
+
+1. Expressions
+2. Operators
+2.1. Equality
+2.2. Inequality
+2.3. Negation
+2.4. Conjunction
+2.5. Disjunction
+3. Dependencies
+3.1. “depends on”
+3.2. “select if”
+4. Choice groups
+5. Defaults
+A. References
+
+
+1. Expressions
+--------------
+
+Because of the tristate logic of the kconfig language, all tristate 
+expressions/values are represented with a pair of boolean 
+expressions/values. We will use the notation X_y and X_m to denote 
+respectively the first and second elements of this pair, where X is a 
+kconfig expression. [Note: In the code, the two elements of the pair 
+will be array elements with indexes 0 and 1, respectively.]
+
+The following table lists the correspondence between tristate kconfig 
+values and boolean-value pairs:
+
+	  _______ tristate value
+	 /  _____ X_y
+	|  /  ___ X_m
+	| |  /
+	| | |
+
+	n 0 0
+	y 1 0
+	m 1 1
+
+(The combination X_y=0, X_m=1 is an impossible value, generally 
+expressed by the constraint X_m -> X_y which holds for all tristate 
+variables.)
+
+
+2. Operators
+------------
+
+The operators of tristate expressions are the following: equality, 
+inequality, negation, conjunction, and disjunction. They are defined in 
+[1], but we repeat the definitions here along with the derivations of 
+the equivalent boolean-pair formulae.
+
+
+2.1. Equality
+-------------
+
+(A = B) is y when A and B have the same value, n otherwise.
+
+	A       B       (A = B)
+	-----------------------
+	n 0 0   n 0 0   y 1 0
+	n 0 0   y 1 0   n 0 0
+	n 0 0   m 1 1   n 0 0
+	y 1 0   n 0 0   n 0 0
+	y 1 0   y 1 0   y 1 0
+	y 1 0   m 1 1   n 0 0
+	m 1 1   n 0 0   n 0 0
+	m 1 1   y 1 0   n 0 0
+	m 1 1   m 1 1   y 1 0
+
+As can easily be seen,
+
+	(A = B)_m ≡ 0.
+
+Observing that (A_B)_y is true if and only if A_y and B_y are equal and 
+A_m and B_m are equal, we could use the formula:
+
+	(A = B)_y ≡ (A_y ↔ B_y) ∧ (A_m ↔ B_m)
+	          ≡ (A_y ∨ ¬B_y) ∧ (¬A_y ∨ B_y) ∧ (A_m ∨ ¬B_m) ∧ (¬A_m ∨ B_m),
+
+or we could try to minimise this by using a Karnaugh map and also 
+taking into account the “don't care”-values. The variables x and y 
+correspond to A_y and A_m, while z and w correspond to B_y and B_m:
+
+	 \zw| 
+	xy\ | 00 01 11 10
+	----+------------
+	 00 |  1  -  0  0   
+	 01 |  -  -  -  -    
+	 11 |  0  -  1  0   
+	 10 |  0  -  0  1  
+
+The result is:
+
+	(A = B)_y ≡ (¬A_y ∧ ¬B_y) ∨ (A_m ∧ B_m) ∨ (A_y ∧ ¬A_m ∧ B_y ∧ ¬B_m).
+
+
+2.2. Inequality
+---------------
+
+Inequality is similar to equality, in that
+
+	(A != B)_m ≡ 0,
+
+and that (A != B)_y is the exact opposite of (A = B)_y, i.e.:
+
+	(A = B)_y ≡ ¬[(A_y ↔ B_y) ∧ (A_m ↔ B_m)]
+	          ≡ ¬(A_y ↔ B_y) ∨ ¬(A_m ↔ B_m)
+	          ≡ (A_y ↮ B_y) ∨ (A_m ↮ B_m).
+
+
+2.3. Negation
+-------------
+
+	X       !X
+	-------------
+	n 0 0   y 1 0
+	y 1 0   n 0 0
+	m 1 1   m 1 1
+
+Clearly,
+
+	(!X)_m ≡ X_m,
+
+and
+
+	(!X)_y ≡ X_y → X_m.
+
+
+2.4. Conjunction
+----------------
+
+	A       B       (A && B)
+	-----------------------
+	n 0 0   n 0 0   n 0 0
+	n 0 0   y 1 0   n 0 0
+	n 0 0   m 1 1   n 0 0
+	y 1 0   n 0 0   n 0 0
+	y 1 0   y 1 0   y 1 0
+	y 1 0   m 1 1   m 1 1
+	m 1 1   n 0 0   n 0 0
+	m 1 1   y 1 0   m 1 1
+	m 1 1   m 1 1   m 1 1
+
+We construct the Karnaugh map for (A && B)_y:
+
+	 \zw| 
+	xy\ | 00 01 11 10
+	----+------------
+	 00 |  0  -  0  0
+	 01 |  -  -  -  -
+	 11 |  0  -  1  1
+	 10 |  0  -  1  1
+
+From this, we can see that
+
+	(A && B)_y ≡ A_y ∧ B_y.
+
+The Karnaugh map for (A && B)_m:
+
+	 \zw| 
+	xy\ | 00 01 11 10
+	----+------------
+	 00 |  0  -  0  0
+	 01 |  -  -  -  -
+	 11 |  0  -  1  1
+	 10 |  0  -  1  0
+
+The boolean formula:
+
+	(A && B)_m ≡ (A_y ∧ B_m) ∨ (A_m ∧ B_y).
+
+
+2.5. Disjunction
+----------------
+
+	A       B       (A || B)
+	-----------------------
+	n 0 0   n 0 0   n 0 0
+	n 0 0   y 1 0   y 1 0
+	n 0 0   m 1 1   m 1 1
+	y 1 0   n 0 0   y 1 0
+	y 1 0   y 1 0   y 1 0
+	y 1 0   m 1 1   y 1 0
+	m 1 1   n 0 0   m 1 1
+	m 1 1   y 1 0   y 1 0
+	m 1 1   m 1 1   m 1 1
+
+We construct the Karnaugh map for (A || B)_y:
+
+	 \zw| 
+	xy\ | 00 01 11 10
+	----+------------
+	 00 |  0  -  1  1
+	 01 |  -  -  -  -
+	 11 |  1  -  1  1
+	 10 |  1  -  1  1
+
+Creating a single 2x2 group of 0s also covering the “don't 
+care”-values, we get the formula:
+
+	(A || B)_y ≡ ¬(¬A_y ∧ ¬B_y)
+	           ≡ A_y ∨ B_y.
+
+The Karnaugh map for (A || B)_m:
+
+	 \zw| 
+	xy\ | 00 01 11 10
+	----+------------
+	 00 |  0  -  1  0
+	 01 |  -  -  -  -
+	 11 |  1  -  1  0
+	 10 |  0  -  0  0
+
+Here, we can create three groups of 0s:
+
+	(A || B)_m ≡ ¬[(¬A_y ∧ ¬B_y) ∨ (A_y ∧ ¬A_m) ∨ (B_y ∧ ¬B_m)]
+	           ≡ ¬(¬A_y ∧ ¬B_y) ∧ ¬(A_y ∧ ¬A_m) ∧ ¬(B_y ∧ ¬B_m)]
+	           ≡ (A_y ∨ B_y) ∧ (A_y → A_m) ∧ (B_y → B_m)
+
+
+3. Dependencies
+---------------
+
+3.1. “depends on”
+-----------------
+
+The “depends on” directive takes two arguments, the current symbol (the
+depender) S, and a kconfig expression X (the dependency itself). The boolean
+formula for this constraint is as follows:
+
+	S_y → X_y
+
+
+3.2. “select”
+-------------
+
+“select” works almost identically to “depends on”, except that it allows an
+additional argument, the conditional clause C (also a kconfig expression).
+If present, the boolean formula for this constraint becomes:
+
+	(S_y ∧ C_y) → X_y,
+
+otherwise it is the same as for “depends on”.
+
+
+4. Choice groups
+----------------
+
+XXX: Write me.
+
+
+5. Defaults
+-----------
+
+XXX: Write me.
+
+
+A. References
+----------
+
+1: Documentation/kbuild/kconfig-language.txt
