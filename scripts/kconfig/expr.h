@@ -182,6 +182,16 @@ static inline bool sym_has_prompt(struct symbol *sym)
 	return false;
 }
 
+static inline struct property *sym_get_prompt(struct symbol *sym)
+{
+	struct property *prop;
+
+	for_all_prompts(sym, prop)
+		return prop;
+
+	return NULL;
+}
+
 struct menu {
 	struct menu *next;
 	struct menu *parent;
