@@ -708,6 +708,7 @@ static bool build_default_clauses(void)
 	/* XXX: This is O(N * M) where N is the number of variables
 	 * and M is the number of clauses. Optimise. */
 	for_all_symbols(i, sym) {
+		struct property *prompt;
 		struct property *prop;
 		struct bool_expr *symbol_value[2];
 
@@ -715,10 +716,10 @@ static bool build_default_clauses(void)
 			continue;
 
 		/* XXX: ? */
-		if (sym_has_prompt(sym))
-			continue;
 		if (!sym->name)
 			continue;
+
+		prompt = sym_get_prompt(sym);
 
 		symbol_to_bool_expr(sym, symbol_value);
 
@@ -729,7 +730,9 @@ static bool build_default_clauses(void)
 			struct bool_expr *t1, *t2, *t3, *t4, *t5;
 			struct cnf *cnf;
 
-			if (prop->menu && prop->menu->dep) {
+			if (prompt && prompt->visible.expr) {
+				expr_to_bool_expr(sym, prompt->visible.expr, menu_cond);
+			} else if (prop->menu && prop->menu->dep) {
 				expr_to_bool_expr(sym, prop->menu->dep, menu_cond);
 			} else {
 				menu_cond[0] = bool_const(true);
