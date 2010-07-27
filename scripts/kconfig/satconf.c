@@ -250,13 +250,17 @@ static struct bool_expr *equal_expr_to_bool_expr(struct symbol *in_a, struct sym
 	case S_INT:
 	case S_HEX:
 	case S_STRING: {
-		const char *a_str = sym_get_string_value(in_a);
-		const char *b_str = sym_get_string_value(in_b);
+		const char *a_str;
+		const char *b_str;
 
-		if (!a_str || !b_str) {
-			fprintf(stderr, "warning: Undefined value for string: %s\n", in_a->name);
-			return bool_const(false);
-		}
+		a_str = sym_get_string_value(in_a);
+		if (!a_str)
+			a_str = "";
+
+		if (in_b && in_b->name)
+			b_str = in_b->name;
+		else
+			b_str = "";
 
 		return bool_const(strcmp(a_str, b_str) == 0);
 	}
