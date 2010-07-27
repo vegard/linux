@@ -581,20 +581,50 @@ static bool build_tristate_clauses(struct symbol *sym)
 	return true;
 }
 
+static bool build_visible(struct symbol *sym)
+{
+	struct property *prompt;
+	struct bool_expr *e[2];
+	struct bool_expr *t1, *t2;
+	struct cnf *cnf;
+	struct gstr str;
+
+	prompt = sym_get_prompt(sym);
+	if (!prompt || !prompt->visible.expr)
+		return true;
+
+	expr_to_bool_expr(sym, prompt->visible.expr, e);
+
+	t1 = bool_var(sym->sat_variable);
+	t2 = bool_dep(t1, e[0]);
+	bool_put(t1);
+	bool_put(e[0]);
+	bool_put(e[1]);
+
+	cnf = bool_to_cnf(t2);
+
+	str = str_new();
+	expr_gstr_print(prompt->visible.expr, &str);
+	add_cnf(cnf, "%s visible if %s", sym->name ?: "<choice>", str_get(&str));
+	str_free(&str);
+
+	cnf_append(kconfig_cnf, cnf);
+	bool_put(t2);
+
+	return true;
+}
+
 static bool build_depends_on_clauses(struct symbol *sym)
 {
 	struct property *prop;
 
-	for_all_prompts(sym, prop) {
+	for_all_properties(sym, prop, P_DEPENDS) {
 		struct bool_expr *e[2];
 		struct bool_expr *t1, *t2;
 		struct cnf *cnf;
 		struct gstr str;
 
-		if (!prop->visible.expr)
-			continue;
-
-		expr_to_bool_expr(sym, prop->visible.expr, e);
+		expr_to_bool_expr(sym, prop->expr, e);
 
 		t1 = bool_var(sym->sat_variable);
 		t2 = bool_dep(t1, e[0]);
@@ -699,6 +729,9 @@ static bool build_clauses(void)
 			if (!build_tristate_clauses(sym))
 				return false;
 		}
+
+		if (!build_visible(sym))
+			return false;
 
 		if (!build_depends_on_clauses(sym))
 			return false;
