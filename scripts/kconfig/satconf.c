@@ -452,24 +452,19 @@ static struct cnf *kconfig_cnf;
 static bool build_choice_clauses(struct symbol *sym)
 {
 	struct property *prop;
-	struct bool_expr *yes;
+	struct property *prompt;
+	struct bool_expr *visible[2];
 
 	assert(sym->type == S_BOOLEAN || sym->type == S_TRISTATE);
 
-	if (sym->type == S_BOOLEAN) {
-		yes = bool_var(sym->sat_variable);
-	} else if (sym->type == S_TRISTATE) {
-		struct bool_expr *t1, *t2, *t3;
+	prompt = sym_get_prompt(sym);
+	assert(prompt);
 
-		t1 = bool_var(sym->sat_variable);
-		t2 = bool_var(sym->sat_variable + 1);
-		t3 = bool_not(t2);
-		bool_put(t2);
-		yes = bool_and(t1, t3);
-		bool_put(t1);
-		bool_put(t3);
+	if (prompt->visible.expr) {
+		expr_to_bool_expr(sym, prompt->visible.expr, visible);
 	} else {
-		assert(false);
+		visible[0] = bool_const(true);
+		visible[1] = bool_const(false);
 	}
 
 	/* If the choice block is not optional, then one of
@@ -499,7 +494,7 @@ static bool build_choice_clauses(struct symbol *sym)
 			}
 		}
 
-		dep = bool_dep(yes, block);
+		dep = bool_dep(visible[0], block);
 		bool_put(block);
 
 		cnf = bool_to_cnf(dep);
@@ -536,7 +531,7 @@ static bool build_choice_clauses(struct symbol *sym)
 				exclusive = t3;
 			}
 
-			dep = bool_dep(yes, exclusive);
+			dep = bool_dep(visible[0], exclusive);
 			bool_put(exclusive);
 
 			cnf = bool_to_cnf(dep);
@@ -546,8 +541,8 @@ static bool build_choice_clauses(struct symbol *sym)
 		}
 	}
 
-	bool_put(yes);
-
+	bool_put(visible[0]);
+	bool_put(visible[1]);
 	return true;
 }
 
