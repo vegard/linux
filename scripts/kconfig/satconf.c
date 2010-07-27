@@ -955,6 +955,19 @@ int main(int argc, char *argv[])
 			else if (sym->flags & (SYMBOL_DEF << S_DEF_USER))
 				sym->curr = sym->def[S_DEF_USER];
 		}
+
+		struct expr *e;
+		expr_list_for_each_sym(sym_env_list, e, sym) {
+			struct property *prop;
+			struct symbol *env_sym;
+
+			prop = sym_get_env_prop(sym);
+			env_sym = prop_get_symbol(prop);
+			if (!env_sym)
+				continue;
+
+			sym->curr.val = getenv(env_sym->name);
+		}
 	}
 
 	assign_sat_variables();
