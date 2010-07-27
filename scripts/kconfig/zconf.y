@@ -427,6 +427,7 @@ depends_list:
 
 depends: T_DEPENDS T_ON expr T_EOL
 {
+	menu_add_expr(P_DEPENDS, expr_copy($3), NULL);
 	menu_add_dep($3);
 	printd(DEBUG_PARSE, "%s:%d:depends on\n", zconf_curname(), zconf_lineno());
 };
