@@ -1,5 +1,7 @@
+#define _GNU_SOURCE
 #include <assert.h>
 #include <locale.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +17,10 @@
 
 static unsigned int nr_sat_variables;
 static struct symbol **sat_variables;
+
+static char **clauses;
+static unsigned int max_clauses;
+static unsigned int nr_clauses;
 
 static void bool_printf(struct bool_expr *e)
 {
@@ -403,12 +409,38 @@ static void add_clause(struct cnf_clause *clause)
 	picosat_add(0);
 }
 
-static void add_cnf(struct cnf *cnf)
+static void add_cnf(struct cnf *cnf, const char *fmt, ...)
 {
+	va_list ap;
+	char *name;
 	struct cnf_clause *i;
 
-	for (i = cnf->first; i; i = i->next)
+	va_start(ap, fmt);
+	vasprintf(&name, fmt, ap);
+	va_end(ap);
+
+	for (i = cnf->first; i; i = i->next) {
+		assert(picosat_added_original_clauses() == nr_clauses);
+
+		if (nr_clauses == max_clauses) {
+			unsigned int new_max_clauses;
+			char **new_clauses;
+
+			new_max_clauses = (max_clauses + 7) * 2;
+			new_clauses = realloc(clauses, new_max_clauses * sizeof(*clauses));
+			if (!new_clauses) {
+				fprintf(stderr, "error: out of memory\n");
+				exit(EXIT_FAILURE);
+			}
+
+			max_clauses = new_max_clauses;
+			clauses  = new_clauses;
+		}
+
+		clauses[nr_clauses++] = name;
+
 		add_clause(i);
+	}
 }
 
 static struct cnf *kconfig_cnf;
@@ -440,8 +472,8 @@ static bool build_choice_clauses(struct symbol *sym)
 	 * options must be set. */
 	if (!(sym->flags & SYMBOL_OPTIONAL)) {
 		struct bool_expr *block;
-
 		struct bool_expr *dep;
+		struct cnf *cnf;
 
 		/* This is a conjunction of all the choice values */
 		block = bool_const(false);
@@ -466,7 +498,9 @@ static bool build_choice_clauses(struct symbol *sym)
 		dep = bool_dep(yes, block);
 		bool_put(block);
 
-		cnf_append(kconfig_cnf, bool_to_cnf(dep));
+		cnf = bool_to_cnf(dep);
+		add_cnf(cnf, "<choice block> depends on <one of the choices>");
+		cnf_append(kconfig_cnf, cnf);
 		bool_put(dep);
 	}
 
@@ -476,8 +510,8 @@ static bool build_choice_clauses(struct symbol *sym)
 
 		expr_list_for_each_sym(prop->expr, expr, choice) {
 			struct bool_expr *exclusive;
-
 			struct bool_expr *dep;
+			struct cnf *cnf;
 
 			exclusive = bool_const(false);
 
@@ -501,7 +535,9 @@ static bool build_choice_clauses(struct symbol *sym)
 			dep = bool_dep(yes, exclusive);
 			bool_put(exclusive);
 
-			cnf_append(kconfig_cnf, bool_to_cnf(dep));
+			cnf = bool_to_cnf(dep);
+			add_cnf(cnf, "<choice block> can have at most one option set");
+			cnf_append(kconfig_cnf, cnf);
 			bool_put(dep);
 		}
 	}
@@ -514,19 +550,24 @@ static bool build_choice_clauses(struct symbol *sym)
 static bool build_tristate_clauses(struct symbol *sym)
 {
 	struct bool_expr *t1, *t2, *t3, *t4;
+	struct cnf *cnf;
 
 	t1 = bool_var(sym->sat_variable);
 	t2 = bool_var(sym->sat_variable + 1);
 	t3 = bool_var(modules_sym->sat_variable);
 
-	/* Add the VAR_m -> VAR restriction */
+	/* Add the VAR_m -> VAR_y restriction */
 	t4 = bool_dep(t2, t1);
-	cnf_append(kconfig_cnf, bool_to_cnf(t4));
+	cnf = bool_to_cnf(t4);
+	add_cnf(cnf, "%s_m -> %s_y", sym->name ?: "<choice>", sym->name ?: "<choice>");
+	cnf_append(kconfig_cnf, cnf);
 	bool_put(t4);
 
 	/* Add the VAR_m -> MODULES restriction */
 	t4 = bool_dep(t2, t3);
-	cnf_append(kconfig_cnf, bool_to_cnf(t4));
+	cnf = bool_to_cnf(t4);
+	add_cnf(cnf, "%s_m -> MODULES", sym->name ?: "<choice>");
+	cnf_append(kconfig_cnf, cnf);
 	bool_put(t4);
 
 	bool_put(t1);
@@ -543,6 +584,8 @@ static bool build_depends_on_clauses(struct symbol *sym)
 	for_all_prompts(sym, prop) {
 		struct bool_expr *e[2];
 		struct bool_expr *t1, *t2;
+		struct cnf *cnf;
+		struct gstr str;
 
 		if (!prop->visible.expr)
 			continue;
@@ -555,7 +598,14 @@ static bool build_depends_on_clauses(struct symbol *sym)
 		bool_put(e[0]);
 		bool_put(e[1]);
 
-		cnf_append(kconfig_cnf, bool_to_cnf(t2));
+		cnf = bool_to_cnf(t2);
+
+		str = str_new();
+		expr_gstr_print(prop->expr, &str);
+		add_cnf(cnf, "%s depends on %s", sym->name ?: "<choice>", str_get(&str));
+		str_free(&str);
+
+		cnf_append(kconfig_cnf, cnf);
 		bool_put(t2);
 	}
 
@@ -570,6 +620,8 @@ static bool build_select_clauses(struct symbol *sym)
 		struct bool_expr *condition[2];
 		struct bool_expr *e[2];
 		struct bool_expr *t1, *t2, *t3;
+		struct cnf *cnf;
+		struct gstr str1, str2;
 
 		/* XXX: The grammar of the kconfig language allows
 		 * constructs like "config FOO select BAR if BAZ",
@@ -602,7 +654,21 @@ static bool build_select_clauses(struct symbol *sym)
 		bool_put(e[0]);
 		bool_put(e[1]);
 
-		cnf_append(kconfig_cnf, bool_to_cnf(t3));
+		cnf = bool_to_cnf(t3);
+
+		str1 = str_new();
+		expr_gstr_print(prop->expr, &str1);
+		str2 = str_new();
+		if (prop->visible.expr) {
+			str_append(&str2, " if ");
+			expr_gstr_print(prop->visible.expr, &str2);
+		}
+		add_cnf(cnf, "%s select %s%s", sym->name ?: "<choice>",
+			str_get(&str1), str_get(&str2));
+		str_free(&str1);
+		str_free(&str2);
+
+		cnf_append(kconfig_cnf, cnf);
 		bool_put(t3);
 	}
 
@@ -729,9 +795,10 @@ static bool build_default_clauses(void)
 			struct bool_expr *value[2];
 			struct bool_expr *t1, *t2, *t3, *t4, *t5;
 			struct cnf *cnf;
+			struct gstr str1, str2;
 
-			if (prompt && prompt->visible.expr) {
-				expr_to_bool_expr(sym, prompt->visible.expr, menu_cond);
+			if (prop && prop->visible.expr) {
+				expr_to_bool_expr(sym, prop->visible.expr, menu_cond);
 			} else if (prop->menu && prop->menu->dep) {
 				expr_to_bool_expr(sym, prop->menu->dep, menu_cond);
 			} else {
@@ -778,7 +845,23 @@ static bool build_default_clauses(void)
 			bool_put(t3);
 
 			cnf = bool_to_cnf(t5);
-			add_cnf(cnf);
+
+			str1 = str_new();
+			expr_gstr_print(prop->expr, &str1);
+			str2 = str_new();
+
+			if (prop && prop->visible.expr) {
+				str_append(&str2, " if ");
+				expr_gstr_print(prop->visible.expr, &str2);
+			} else if (prop->menu && prop->menu->dep) {
+				str_append(&str2, " if ");
+				expr_gstr_print(prop->menu->dep, &str2);
+			}
+			add_cnf(cnf, "%s default %s%s", sym->name ?: "<choice>",
+				str_get(&str1), str_get(&str2));
+			str_free(&str1);
+			str_free(&str2);
+
 			cnf_put(cnf);
 
 			bool_put(t5);
@@ -798,6 +881,7 @@ int main(int argc, char *argv[])
 	textdomain(PACKAGE);
 
 	picosat_init();
+	picosat_enable_trace_generation();
 	picosat_set_global_default_phase(0);
 
 	conf_parse(argv[1]);
@@ -857,7 +941,6 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-	add_cnf(kconfig_cnf);
 
 	if (!build_default_clauses()) {
 		fprintf(stderr, "error: inconsistent kconfig files while "
@@ -877,7 +960,15 @@ int main(int argc, char *argv[])
 		int sat = picosat_sat(-1);
 
 		if (sat != PICOSAT_SATISFIABLE) {
+			unsigned int i;
+
 			fprintf(stderr, "error: inconsistent kconfig files\n");
+
+			for (i = 0; i < nr_clauses; ++i) {
+				if (picosat_coreclause(i))
+					fprintf(stderr, "clause: %s\n", clauses[i]);
+			}
+
 			exit(EXIT_FAILURE);
 		}
 	}
@@ -916,6 +1007,12 @@ int main(int argc, char *argv[])
 
 		if (sat != PICOSAT_SATISFIABLE) {
 			fprintf(stderr, "error: unsatisfiable constraints\n");
+
+			for (i = 0; i < nr_clauses; ++i) {
+				if (picosat_coreclause(i))
+					fprintf(stderr, "clause: %s\n", clauses[i]);
+			}
+
 			exit(EXIT_FAILURE);
 		}
 
