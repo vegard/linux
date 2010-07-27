@@ -1,5 +1,5 @@
 /****************************************************************************
-Copyright (c) 2006 - 2009, Armin Biere, Johannes Kepler University.
+Copyright (c) 2006 - 2010, Armin Biere, Johannes Kepler University.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to
@@ -32,13 +32,13 @@ IN THE SOFTWARE.
 
 /* By default code for 'all different constraints' is disabled, since 'NADC'
  * is defined.
- */
 #define NADC
+ */
 
 /* By default we enable failed literals, since 'NFL' is undefined.
  *
-#define NFL
  */
+#define NFL
 
 /* By default we 'detach satisfied (large) clauses', e.g. NDSC undefined.
  *
@@ -173,8 +173,11 @@ typedef unsigned long Wrd;
 #define RNK2LIT(r) (lits + 2 * ((r) - rnks))
 #define RNK2VAR(r) (vars + ((r) - rnks))
 
+#define BLK_FILL_BYTES 8
+#define SIZE_OF_BLK (sizeof (Blk) - BLK_FILL_BYTES)
+
 #define PTR2BLK(void_ptr) \
-  ((void_ptr) ? (Blk*)(((char*)(void_ptr)) - sizeof(Blk)) : 0)
+  ((void_ptr) ? (Blk*)(((char*)(void_ptr)) - SIZE_OF_BLK) : 0)
 
 #define AVERAGE(a,b) ((b) ? (((double)a) / (double)(b)) : 0.0)
 #define PERCENT(a,b) (100.0 * AVERAGE(a,b))
@@ -404,7 +407,9 @@ struct Var
 struct Rnk
 {
   Act score;
-  unsigned pos;			/* 0 iff not on heap */
+  unsigned pos : 30;			/* 0 iff not on heap */
+  unsigned moreimportant : 1;
+  unsigned lessimportant : 1;
 };
 
 struct Cls
@@ -452,7 +457,7 @@ struct Blk
   }
   header;
 #endif
-  char data[0];
+  char data[BLK_FILL_BYTES];
 };
 
 static enum State
@@ -464,6 +469,8 @@ static enum State
   UNKNOWN = 4,
 } 
 state = RESET;
+
+static int last_sat_call_result;
 
 static FILE *out;
 static char * prefix;
@@ -493,6 +500,7 @@ static Lit **ttailado;
 #endif
 static unsigned adecidelevel;
 static Lit **als, **alshead, **alstail, **eoals;
+static int *fals, *falshead, *eofals;
 static Lit *failed_assumption;
 static int extracted_all_failed_assumptions;
 static Rnk **heap, **hhead, **eoh;
@@ -556,6 +564,7 @@ static int waslubymaxdelta;
 #endif
 static unsigned long long lsimplify;
 static unsigned long long propagations;
+static unsigned long long lpropagations;
 static unsigned fixed;		/* top level assignments */
 #ifndef NFL
 static unsigned failedlits;
@@ -893,7 +902,7 @@ new (size_t size)
   if (!size)
     return 0;
 
-  bytes = size + sizeof *b;
+  bytes = size + SIZE_OF_BLK;
 
   if (enew)
     b = enew (emgr, bytes);
@@ -930,7 +939,7 @@ delete (void *void_ptr, size_t size)
 
   assert (b->header.size == size);
 
-  bytes = size + sizeof *b;
+  bytes = size + SIZE_OF_BLK;
   if (edelete)
     edelete (emgr, b, bytes);
   else
@@ -948,17 +957,16 @@ resize (void *void_ptr, size_t old_size, size_t new_size)
   assert (old_size <= current_bytes);
   current_bytes -= old_size;
 
-
   if ((old_bytes = old_size))
     {
       assert (old_size && b->header.size == old_size);
-      old_bytes += sizeof *b;
+      old_bytes += SIZE_OF_BLK;
     }
   else
     assert (!b);
 
   if ((new_bytes = new_size))
-    new_bytes += sizeof *b;
+    new_bytes += SIZE_OF_BLK;
 
   if (eresize)
     b = eresize (emgr, b, old_bytes, new_bytes);
@@ -1161,6 +1169,7 @@ init (void)
   ilcinc = base2flt (1, -90);	/* inverse of 'ilcinc' */
 
   lreduceadjustcnt = lreduceadjustinc = 100;
+  lpropagations = ~0ull;
 
   out = stdout;
   new_prefix ("c ");
@@ -1197,7 +1206,9 @@ init (void)
            "set output \"/tmp/picosat-viscores/gif/animated.gif\"\n");
 #endif
 #endif
+  defaultphase = 2;
   state = READY;
+  last_sat_call_result = 0;
 }
 
 static size_t
@@ -1439,6 +1450,8 @@ reset (void)
   extracted_all_failed_assumptions = 0;
   failed_assumption = 0;
   adecidelevel = 0;
+  DELETEN (fals, eofals - fals);
+  fals = eofals = falshead = 0;
 
   size_vars = 0;
   max_var = 0;
@@ -1576,7 +1589,7 @@ reset (void)
 #endif
 
   sdflips = 0;
-  defaultphase = 0;
+  defaultphase = 2;
 
 #ifdef STATS
   staticphasedecisions = 0;
@@ -1791,6 +1804,18 @@ cmp_ptr (void *l, void *k)
 static int
 cmp_rnk (Rnk * r, Rnk * s)
 {
+  if (!r->moreimportant && s->moreimportant)
+    return -1;
+
+  if (r->moreimportant && !s->moreimportant)
+    return 1;
+
+  if (!r->lessimportant && s->lessimportant)
+    return 1;
+
+  if (r->lessimportant && !s->lessimportant)
+    return -1;
+
   if (r->score < s->score)
     return -1;
 
@@ -2035,7 +2060,6 @@ assign_forced (Lit * lit, Cls * reason)
     {
       assert (!reason->locked);
       reason->locked = 1;
-
       if (reason->learned && reason->size > 2)
 	llocked++;
     }
@@ -2243,19 +2267,27 @@ incjwh (Cls * cls)
   Lit **p, *lit, ** eol;
   Flt * f, inc, sum;
   unsigned size = 0;
-
-  assert (!level);
+  Var * v;
+  Val val;
 
   eol = end_of_lits (cls);
 
   for (p = cls->lits; p < eol; p++)
     {
       lit = *p;
+      val = lit->val;
 
-      if (lit->val == TRUE)
+      if (val && level > 0)
+	{
+	  v = LIT2VAR (lit);
+	  if (v->level > 0)
+	    val = UNDEF;
+	}
+
+      if (val == TRUE)
 	return;
 
-      if (lit->val != FALSE)
+      if (val != FALSE)
 	size++;
     }
 
@@ -2559,9 +2591,13 @@ REENTER:
       conflict = res;
     }
 
-  if (!num_true && num_undef)
+  if (!learned && !num_true && num_undef)
     incjwh (res);
 
+#ifdef NO_BINARY_CLAUSES
+  if (res == &impl)
+    resetimpl ();
+#endif
   return res;
 }
 
@@ -2936,7 +2972,6 @@ unassign (Lit * lit)
     {
       assert (reason->locked);
       reason->locked = 0;
-
       if (reason->learned && reason->size > 2)
 	{
 	  assert (llocked > 0);
@@ -3724,6 +3759,111 @@ DONE_FIRST_UIP:
   mhead = marked;
 }
 
+static void
+fanalyze (void)
+{
+  Lit ** eol, ** p, * lit;
+  Cls * cls, * reason;
+  Var * v, * u;
+  int next;
+
+  double start = picosat_time_stamp ();
+
+  assert (failed_assumption);
+  assert (failed_assumption->val == FALSE);
+
+  v = LIT2VAR (failed_assumption);
+  reason = var2reason (v);
+  if (!reason) return;
+#ifdef NO_BINARY_CLAUSES
+  if (reason == &impl)
+    resetimpl ();
+#endif
+
+  eol = end_of_lits (reason);
+  for (p = reason->lits; p != eol; p++)
+    {
+      lit = *p;
+      u = LIT2VAR (lit);
+      if (u == v) continue;
+      if (u->reason) break;
+    }
+  if (p == eol) return;
+
+  assert (ahead == added);
+  assert (mhead == marked);
+  assert (rhead == resolved);
+
+  next = 0;
+  mark_var (v);
+  add_lit (NOTLIT (failed_assumption));
+
+  do
+    {
+      v = marked[next++];
+      use_var (v);
+      if (v->reason)
+	{
+	  reason = var2reason (v);
+#ifdef NO_BINARY_CLAUSES
+	  if (reason == &impl)
+	    resetimpl ();
+#endif
+	  add_antecedent (reason);
+	  eol = end_of_lits (reason);
+	  for (p = reason->lits; p != eol; p++)
+	    {
+	      lit = *p;
+	      u = LIT2VAR (lit);
+	      if (u == v) continue;
+	      if (u->mark) continue;
+	      mark_var (u);
+	    }
+	}
+      else
+	{
+	  lit = VAR2LIT (v);
+	  if (lit->val == TRUE) lit = NOTLIT (lit);
+	  add_lit (lit);
+	}
+    } 
+  while (marked + next < mhead);
+
+  cls = add_simplified_clause (1);
+  v = LIT2VAR (failed_assumption);
+  reason = var2reason (v);
+#ifdef NO_BINARY_CLAUSES
+  if (reason == &impl)
+    resetimpl ();
+  else
+#endif
+  {
+    assert (reason->locked);
+    reason->locked = 0;
+  }
+  if (reason->learned && reason->size > 2)
+    {
+      assert (llocked > 0);
+      llocked--;
+    }
+  v->reason = cls;
+  assert (cls->learned);
+  assert (!cls->locked);
+  cls->locked = 1;
+  if (cls->size > 2)
+    {
+      llocked++;
+      assert (llocked > 0);
+    }
+
+  while (mhead > marked)
+    (*--mhead)->mark = 0;
+
+  if (verbosity)
+    fprintf (out, "%sfanalyze took %.1f seconds\n", 
+	     prefix, picosat_time_stamp () - start);
+}
+
 /* Propagate assignment of 'this' to 'FALSE' by visiting all binary clauses in
  * which 'this' occurs.
  */
@@ -4103,14 +4243,14 @@ enlarge_adotab (void)
   CLRN (adotab, szadotab);
 }
 
-static void
+static int
 propado (Var * v)
 {
   Lit ** p, ** q, *** adotabpos, **ado, * lit;
   Var * u;
 
   if (level && adodisabled)
-    return;
+    return 1;
 
   assert (!conflict);
   assert (!adoconflict);
@@ -4674,6 +4814,8 @@ collect_clauses (void)
   res -= current_bytes;
   recycled += res;
 
+  LOG (fprintf (out, "%scollected %ld bytes\n", prefix, res));
+
   return res;
 }
 
@@ -4925,10 +5067,9 @@ faillits (void)
 #ifdef STATSA
   flrounds++;
 #endif
-  if (flcalls == 1)
-    delta = 10 * 1000 * 1000;
-  else
-    delta = 1000 * 1000;
+  delta = propagations/10;
+  if (delta >= 100*1000*1000) delta = 100*1000*1000;
+  else if (delta <= 100*1000) delta = 100*1000;
 
   limit = propagations + delta;
   fllimit = propagations;
@@ -5304,7 +5445,7 @@ cmp_activity (Cls * c, Cls * d)
 }
 
 static void
-reduce (void)
+reduce (unsigned percentage)
 {
   unsigned rcount, lcollect, collect, target, ld;
   size_t bytes_collected;
@@ -5313,7 +5454,10 @@ reduce (void)
 
   lastreduceconflicts = conflicts;
 
-  assert (rhead == resolved);
+  assert (percentage <= 100);
+  LOG (fprintf (out, 
+                "%sreducing %u%% learned clauses\n",
+		prefix, percentage));
 
   while (nlclauses - llocked > (unsigned)(eor - resolved))
     ENLARGE (resolved, rhead, eor);
@@ -5373,7 +5517,7 @@ reduce (void)
     ;
   minact = mulflt (cinc, base2flt (1, -ld));
 
-  target /= 2;
+  target = (percentage * target + 99) / 100;
 
   if (target >= rcount)
     {
@@ -5481,14 +5625,20 @@ decide_phase (Lit * lit)
 #ifdef STATS
       staticphasedecisions++;
 #endif
-      if (defaultphase > 0)
+      if (defaultphase == 1)
 	{
 	  /* assign to TRUE */
 	}
-      else if (defaultphase < 0)
+      else if (defaultphase == 0)
 	{
 	  /* assign to FALSE */
 	  lit = not_lit;
+	}
+      else if (defaultphase == 3)
+	{
+	  /* randomly assign default phase */
+	  if (rrng (1, 2) != 2)
+	    lit = not_lit;
 	}
       else if (*LIT2JWH(lit) <= *LIT2JWH (not_lit))
 	{
@@ -5637,13 +5787,19 @@ adecide (void)
 
 	  use_var (v);
 
-	  LOG (fprintf (out, "%sfailed assumption %d\n",
+	  LOG (fprintf (out, "%sfirst failed assumption %d\n",
 			prefix, lit2int (failed_assumption)));
+	  fanalyze ();
 	  return 0;
 	}
 
       if (lit->val == TRUE)
-	continue;
+	{
+	  v = LIT2VAR (lit);
+	  if (v->level > adecidelevel)
+	    adecidelevel = v->level;
+	  continue;
+	}
 
 #ifdef STATS
       assumptions++;
@@ -5711,8 +5867,6 @@ sat (int l)
 
   isimplify = fixed;
   backtracked = 0;
-  if (l < 0)
-    l = INT_MAX;
 
   for (;;)
     {
@@ -5747,7 +5901,10 @@ SATISFIED:
 	    iteration ();
 	}
 
-      if (count >= l)		/* decision limit reached ? */
+      if (l >= 0 && count >= l)		/* decision limit reached ? */
+	return PICOSAT_UNKNOWN;
+
+      if (propagations >= lpropagations)/* propagation limit reached ? */
 	return PICOSAT_UNKNOWN;
 
 #ifndef NADC
@@ -5778,7 +5935,7 @@ SATISFIED:
 	init_reduce ();
 
       if (need_to_reduce ())
-	reduce ();
+	reduce (50);
 
       if (conflicts >= lrestart && level > 2)
 	restart ();
@@ -5790,6 +5947,31 @@ SATISFIED:
     }
 }
 
+static void
+rebias (void)
+{
+  Cls ** p, * c;
+  Var * v;
+
+  for (v = vars + 1; v <= vars + max_var; v++)
+    v->assigned = 0;
+
+  memset (jwh, 0, 2 * (max_var + 1) * sizeof *jwh);
+
+  for (p = oclauses; p < ohead; p++) 
+    {
+      c = *p;
+
+      if (!c) 
+	continue;
+
+      if (c->learned)
+	continue;
+
+      incjwh (c);
+    }
+}
+
 #ifdef TRACE
 
 static unsigned
@@ -5797,10 +5979,10 @@ core (void)
 {
   unsigned idx, prev, this, delta, i, lcore, vcore;
   unsigned *stack, *shead, *eos;
-  Lit **q, **eol;
+  Lit **q, **eol, *lit;
+  Cls *cls, *reason;
   Znt *p, byte;
   Zhn *zhain;
-  Cls *cls;
   Var *v;
 
   assert (trace);
@@ -5823,11 +6005,10 @@ core (void)
     {
       assert (failed_assumption);
       v = LIT2VAR (failed_assumption);
-      if (v->reason)
-	{
-	  idx = CLS2IDX (v->reason);
-	  *shead++ = idx;
-	}
+      reason = v->reason;
+      assert (reason);
+      idx = CLS2IDX (reason);
+      *shead++ = idx;
     }
 
   while (shead > stack)
@@ -5887,12 +6068,25 @@ core (void)
 	  eol = end_of_lits (cls);
 	  for (q = cls->lits; q < eol; q++)
 	    {
-	      v = LIT2VAR (*q);
+	      lit = *q;
+	      v = LIT2VAR (lit);
 	      if (v->core)
 		continue;
 
 	      v->core = 1;
 	      vcore++;
+
+	      if (!failed_assumption) continue;
+	      if (lit != failed_assumption) continue;
+
+	      reason = v->reason;
+	      if (!reason) continue;
+	      if (reason->core) continue;
+
+	      idx = CLS2IDX (reason);
+	      if (shead == eos)
+		ENLARGE (stack, shead, eos);
+	      *shead++ = idx;
 	    }
 	}
     }
@@ -6163,8 +6357,6 @@ reset_assumptions (void)
   Lit ** p;
 
   failed_assumption = 0;
-  alstail = alshead = als;
-  adecidelevel = 0;
 
   if (extracted_all_failed_assumptions)
     {
@@ -6173,6 +6365,9 @@ reset_assumptions (void)
 
       extracted_all_failed_assumptions = 0;
     }
+
+  alstail = alshead = als;
+  adecidelevel = 0;
 }
 
 static void
@@ -6294,6 +6489,8 @@ extract_all_failed_assumptions (void)
   int pos;
   Cls * c;
 
+  assert (!extracted_all_failed_assumptions);
+
   assert (failed_assumption);
   assert (mhead == marked);
 
@@ -6323,18 +6520,21 @@ extract_all_failed_assumptions (void)
   for (p = als; p < alshead; p++)
     {
       u = LIT2VAR (*p);
-      if (u->mark)
-	u->failed = 1;
+      if (!u->mark) continue;
+      u->failed = 1;
+      LOG (fprintf (out, "%sfailed assumption %d\n", prefix, lit2int (*p)));
     }
 
   while (mhead > marked)
     (*--mhead)->mark = 0;
+
+  extracted_all_failed_assumptions = 1;
 }
 
 const char *
 picosat_copyright (void)
 {
-  return "Copyright (c) 2006 - 2009 Armin Biere JKU Linz";
+  return "Copyright (c) 2006 - 2010 Armin Biere JKU Linz";
 }
 
 void
@@ -6441,9 +6641,10 @@ picosat_reset (void)
   reset ();
 }
 
-void
+int
 picosat_add (int int_lit)
 {
+  int res = oadded;
   Lit *lit;
 
   if (measurealltimeinlib)
@@ -6469,6 +6670,8 @@ picosat_add (int int_lit)
 
   if (measurealltimeinlib)
     leave ();
+
+  return res;
 }
 
 void
@@ -6529,6 +6732,7 @@ picosat_assume (int int_lit)
     }
 
   *alshead++ = lit;
+  LOG (fprintf (out, "%sassumption %d\n", prefix, int_lit));
 
   if (measurealltimeinlib)
     leave ();
@@ -6587,7 +6791,15 @@ picosat_sat (int l)
   leave ();
   LOG (fprintf (out, "%sEND call %u\n", prefix, calls));
 
+  last_sat_call_result = res;
+
   return res;
+}
+
+int
+picosat_res (void)
+{
+  return last_sat_call_result;
 }
 
 int
@@ -6677,7 +6889,45 @@ picosat_corelit (int int_lit)
     core ();
     if (abs (int_lit) <= (int) max_var)
       res = vars[abs (int_lit)].core;
-    assert (!res || vars[abs (int_lit)].used);
+    assert (!res || failed_assumption || vars[abs (int_lit)].used);
+    if (measurealltimeinlib)
+      leave ();
+  }
+#else
+  ABORT ("compiled without trace support");
+#endif
+
+  return res;
+}
+
+int
+picosat_coreclause (int ocls)
+{
+  int res;
+
+  check_ready ();
+  check_unsat_state ();
+
+  ABORTIF (ocls < 0, "API usage: negative original clause index");
+  ABORTIF (ocls >= (int)oadded, "API usage: original clause index exceeded");
+
+  assert (mtcls || failed_assumption);
+
+  res  = 0;
+
+#ifdef TRACE
+  {
+    Cls ** clsptr, * cls;
+
+    ABORTIF (!trace, "tracing disabled");
+    if (measurealltimeinlib)
+      enter ();
+    core ();
+    clsptr = oclauses + ocls;
+    assert (clsptr < ohead);
+    cls = *clsptr;
+    if (cls) 
+      res = cls->core;
     if (measurealltimeinlib)
       leave ();
   }
@@ -6706,6 +6956,40 @@ picosat_failed_assumption (int int_lit)
   lit = import_lit (int_lit);
   v = LIT2VAR (lit);
   return v->failed;
+}
+
+const int *
+picosat_failed_assumptions (void)
+{
+  Lit ** p, * lit;
+  Var * v;
+  int ilit;
+
+  falshead = fals;
+  check_ready ();
+  check_unsat_state ();
+  if (!mtcls) 
+    {
+      assert (failed_assumption);
+      if (!extracted_all_failed_assumptions)
+	extract_all_failed_assumptions ();
+
+      for (p = als; p < alshead; p++)
+	{
+	  lit = *p;
+	  v = LIT2VAR (*p);
+	  if (!v->failed)
+	    continue;
+	  ilit = LIT2INT (lit);
+	  if (falshead == eofals)
+	    ENLARGE (fals, falshead, eofals);
+	  *falshead++ = ilit;
+	}
+    }
+  if (falshead == eofals)
+    ENLARGE (fals, falshead, eofals);
+  *falshead++ = 0;
+  return fals;
 }
 
 int
@@ -6751,6 +7035,18 @@ picosat_max_bytes_allocated (void)
 {
   check_ready ();
   return max_bytes;
+}
+
+void
+picosat_set_propagation_limit (unsigned long long l)
+{
+  lpropagations = l;
+}
+
+unsigned long long
+picosat_propagations (void)
+{
+  return propagations;
 }
 
 int
@@ -6883,7 +7179,7 @@ picosat_stats (void)
 	   prefix, ltraversals, AVERAGE (ltraversals, lvisits));
   fprintf (out, "%s%llu assignments\n", prefix, assignments);
 #else
-  fprintf (out, "%s%llu propagations\n", prefix, propagations);
+  fprintf (out, "%s%llu propagations\n", prefix, picosat_propagations ());
 #endif
   fprintf (out, "%s%.1f%% variables used\n", prefix, PERCENT (vused, max_var));
 
@@ -7107,9 +7403,38 @@ picosat_set_delete (void * nmgr, void (*ndelete)(void*,void*,size_t))
 }
 
 void
+picosat_reset_phases (void)
+{
+  rebias ();
+}
+
+void
+picosat_reset_scores (void)
+{
+  Rnk * r;
+  hhead = heap + 1;
+  for (r = rnks + 1; r <= rnks + max_var; r++)
+    {
+      CLR (r);
+      hpush (r);
+    }
+}
+
+void
+picosat_remove_learned (unsigned percentage)
+{
+  reset_incremental_usage ();
+  reduce (percentage);
+}
+
+void
 picosat_set_global_default_phase (int phase)
 {
   check_ready ();
+  ABORTIF (phase < 0, "API usage: 'picosat_set_global_default_phase' "
+                      "with negative argument");
+  ABORTIF (phase > 3, "API usage: 'picosat_set_global_default_phase' "
+                      "with argument > 3");
   defaultphase = phase;
 }
 
@@ -7133,6 +7458,54 @@ picosat_set_default_phase_lit (int int_lit, int phase)
     }
   else
     v->assigned = 0;
+}
+
+void
+picosat_set_more_important_lit (int int_lit)
+{
+  Lit * lit;
+  Var * v;
+  Rnk * r;
+
+  check_ready ();
+
+  lit = import_lit (int_lit);
+  v = LIT2VAR (lit);
+  r = VAR2RNK (v);
+
+  ABORTIF (r->lessimportant, "can not mark variable more and less important"); 
+
+  if (r->moreimportant)
+    return;
+
+  r->moreimportant = 1;
+
+  if (r->pos)
+    hup (r);
+}
+
+void
+picosat_set_less_important_lit (int int_lit)
+{
+  Lit * lit;
+  Var * v;
+  Rnk * r;
+
+  check_ready ();
+
+  lit = import_lit (int_lit);
+  v = LIT2VAR (lit);
+  r = VAR2RNK (v);
+
+  ABORTIF (r->moreimportant, "can not mark variable more and less important"); 
+
+  if (r->lessimportant)
+    return;
+
+  r->lessimportant = 1;
+
+  if (r->pos)
+    hup (r);
 }
 
 #ifndef NADC
@@ -7168,3 +7541,14 @@ picosat_set_ado_conflict_limit (unsigned newadoconflictlimit)
 }
 
 #endif
+
+int
+picosat_haveados (void)
+{
+#ifndef NADC
+  return 1;
+#else
+  return 0;
+#endif
+}
+
