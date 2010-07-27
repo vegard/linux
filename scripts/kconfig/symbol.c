@@ -1350,6 +1350,8 @@ const char *prop_get_type_name(enum prop_type type)
 		return "default";
 	case P_CHOICE:
 		return "choice";
+	case P_DEPENDS:
+		return "depends on";
 	case P_SELECT:
 		return "select";
 	case P_RANGE:
