@@ -878,6 +878,23 @@ static bool build_default_clauses(void)
 	return true;
 }
 
+static void check_sym_value(struct symbol *sym, tristate value)
+{
+	static const char *tristate_names[] = {
+		[no] = "no",
+		[mod] = "mod",
+		[yes] = "yes",
+	};
+
+	if (sym->curr.tri == value)
+		return;
+
+	fprintf(stderr, "warning: symbol %s changed from %s to %s\n",
+		sym->name ?: "<choice>",
+		tristate_names[value],
+		tristate_names[sym->curr.tri]);
+}
+
 int main(int argc, char *argv[])
 {
 	setlocale(LC_ALL, "");
@@ -944,7 +961,6 @@ int main(int argc, char *argv[])
 			"building clauses\n");
 		exit(EXIT_FAILURE);
 	}
-
 
 	if (!build_default_clauses()) {
 		fprintf(stderr, "error: inconsistent kconfig files while "
@@ -1022,25 +1038,35 @@ int main(int argc, char *argv[])
 
 		struct symbol *sym;
 		for_all_symbols(i, sym) {
+			if (!sym->name)
+				continue;
 			if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
 				continue;
 
 			{
-				int v = picosat_deref(sym->sat_variable);
-				assert(v != 0);
+				int y = picosat_deref(sym->sat_variable);
+				assert(y != 0);
 
-				if (v == 1)
-					sym->curr.tri = yes;
-				else if (v == -1)
+				if (y == 1) {
+					if (sym->type == S_TRISTATE) {
+						int m = picosat_deref(sym->sat_variable + 1);
+						assert(m != 0);
+
+						if (m == 1)
+							sym->curr.tri = mod;
+						else if (m == -1)
+							sym->curr.tri = yes;
+					} else {
+						sym->curr.tri = yes;
+					}
+				} else if (y == -1) {
+					if (sym->type == S_TRISTATE) {
+						int m = picosat_deref(sym->sat_variable + 1);
+						assert(m == -1);
+					}
+
 					sym->curr.tri = no;
-			}
-
-			if (sym->type == S_TRISTATE) {
-				int v = picosat_deref(sym->sat_variable + 1);
-				assert(v != 0);
-
-				if (v == 1)
-					sym->curr.tri = mod;
+				}
 			}
 
 			sym->flags |= SYMBOL_VALID;
@@ -1056,6 +1082,45 @@ int main(int argc, char *argv[])
 	if (conf_write_autoconf()) {
 		fprintf(stderr, "error: writing configuration\n");
 		exit(EXIT_FAILURE);
+	}
+
+	{
+		/* Check that none of the symbol values changed while writing
+		 * out the configuration files. */
+		unsigned int i;
+		struct symbol *sym;
+		for_all_symbols(i, sym) {
+			if (!sym->name)
+				continue;
+			if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
+				continue;
+
+			{
+				int y = picosat_deref(sym->sat_variable);
+				assert(y != 0);
+
+				if (y == 1) {
+					if (sym->type == S_TRISTATE) {
+						int m = picosat_deref(sym->sat_variable + 1);
+						assert(m != 0);
+
+						if (m == 1)
+							check_sym_value(sym, mod);
+						else if (m == -1)
+							check_sym_value(sym, yes);
+					} else {
+						check_sym_value(sym, yes);
+					}
+				} else if (y == -1) {
+					if (sym->type == S_TRISTATE) {
+						int m = picosat_deref(sym->sat_variable + 1);
+						assert(m == -1);
+					}
+
+					check_sym_value(sym, no);
+				}
+			}
+		}
 	}
 
 	return EXIT_SUCCESS;
