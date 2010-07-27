@@ -227,6 +227,9 @@ HOSTLOADLIBES_nconf	= $(shell \
 				pkg-config --libs menuw panelw ncursesw 2>/dev/null \
 				|| pkg-config --libs menu panel ncurses 2>/dev/null \
 				|| echo "-lmenu -lpanel -lncurses"  )
+
+HOSTCFLAGS_picosat.o	= -DTRACE
+
 $(obj)/qconf.o: $(obj)/.tmp_qtcheck
 
 ifeq ($(MAKECMDGOALS),xconfig)
