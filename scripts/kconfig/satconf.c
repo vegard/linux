@@ -906,6 +906,8 @@ static bool build_default_clauses(void)
 	return true;
 }
 
+static unsigned int nr_changed = 0;
+
 static void check_sym_value(struct symbol *sym, tristate value)
 {
 	static const char *tristate_names[] = {
@@ -917,10 +919,14 @@ static void check_sym_value(struct symbol *sym, tristate value)
 	if (sym->curr.tri == value)
 		return;
 
+#if 0
 	fprintf(stderr, "warning: symbol %s changed from %s to %s\n",
 		sym->name ?: "<choice>",
 		tristate_names[value],
 		tristate_names[sym->curr.tri]);
+#else
+	++nr_changed;
+#endif
 }
 
 int main(int argc, char *argv[])
@@ -1161,6 +1167,11 @@ int main(int argc, char *argv[])
 					check_sym_value(sym, no);
 				}
 			}
+		}
+
+		if (nr_changed) {
+			fprintf(stderr, "warning: %u symbols differ "
+				"from their SAT assignments\n", nr_changed);
 		}
 	}
 
