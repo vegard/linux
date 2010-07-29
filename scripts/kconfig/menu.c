@@ -323,6 +323,8 @@ void menu_finalize(struct menu *parent)
 			for (; prop; prop = prop->next) {
 				if (prop->menu != menu)
 					continue;
+				if (prop->type == P_RAW_DEPENDS || prop->type == P_RAW_SELECT)
+					continue;
 				dep = expr_transform(prop->visible.expr);
 				dep = expr_alloc_and(expr_copy(basedep), dep);
 				dep = expr_eliminate_dups(dep);
