@@ -925,9 +925,8 @@ static void check_sym_value(struct symbol *sym, tristate value)
 		sym->name ?: "<choice>",
 		tristate_names[value],
 		tristate_names[sym->curr.tri]);
-#else
-	++nr_changed;
 #endif
+	++nr_changed;
 }
 
 int main(int argc, char *argv[])
