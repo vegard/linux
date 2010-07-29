@@ -795,17 +795,23 @@ static bool build_default_clauses(void)
 	 * and M is the number of clauses. Optimise. */
 	for_all_symbols(i, sym) {
 		struct property *prompt;
+		struct bool_expr *visible[2];
 		struct property *prop;
 		struct bool_expr *symbol_value[2];
 
 		if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
 			continue;
 
-		/* XXX: ? */
 		if (!sym->name)
 			continue;
 
 		prompt = sym_get_prompt(sym);
+		if (prompt && prompt->visible.expr) {
+			expr_to_bool_expr(sym, prompt->visible.expr, visible);
+		} else {
+			visible[0] = bool_const(false);
+			visible[1] = bool_const(false);
+		}
 
 		symbol_to_bool_expr(sym, symbol_value);
 
@@ -813,7 +819,7 @@ static bool build_default_clauses(void)
 			struct bool_expr *menu_cond[2];
 			struct bool_expr *cond;
 			struct bool_expr *value[2];
-			struct bool_expr *t1, *t2, *t3, *t4, *t5;
+			struct bool_expr *t1, *t2, *t3, *t4, *t5, *t6, *t7;
 			struct cnf *cnf;
 			struct gstr str1, str2;
 
@@ -860,11 +866,17 @@ static bool build_default_clauses(void)
 			bool_put(menu_cond[1]);
 			bool_put(cond);
 
-			t5 = bool_dep(t4, t3);
+			t5 = bool_not(visible[0]);
+			t6 = bool_and(t4, t5);
 			bool_put(t4);
+			bool_put(t5);
+
+			t7 = bool_dep(t6, t3);
+			bool_put(t6);
 			bool_put(t3);
 
-			cnf = bool_to_cnf(t5);
+			cnf = bool_to_cnf(t7);
+			bool_put(t7);
 
 			str1 = str_new();
 			expr_gstr_print(prop->expr, &str1);
@@ -883,9 +895,10 @@ static bool build_default_clauses(void)
 			str_free(&str2);
 
 			cnf_put(cnf);
-
-			bool_put(t5);
 		}
+
+		bool_put(visible[0]);
+		bool_put(visible[1]);
 
 		bool_put(symbol_value[0]);
 		bool_put(symbol_value[1]);
