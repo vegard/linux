@@ -213,6 +213,7 @@ config_option: T_DEFAULT expr if_expr T_EOL
 config_option: T_SELECT T_WORD if_expr T_EOL
 {
 	menu_add_symbol(P_SELECT, sym_lookup($2, 0), $3);
+	menu_add_symbol(P_RAW_SELECT, sym_lookup($2, 0), expr_copy($3));
 	printd(DEBUG_PARSE, "%s:%d:select\n", zconf_curname(), zconf_lineno());
 };
 
@@ -427,8 +428,8 @@ depends_list:
 
 depends: T_DEPENDS T_ON expr T_EOL
 {
-	menu_add_expr(P_DEPENDS, expr_copy($3), NULL);
 	menu_add_dep($3);
+	menu_add_expr(P_RAW_DEPENDS, expr_copy($3), NULL);
 	printd(DEBUG_PARSE, "%s:%d:depends on\n", zconf_curname(), zconf_lineno());
 };
 

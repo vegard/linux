@@ -144,11 +144,13 @@ enum prop_type {
 	P_MENU,     /* prompt associated with a menuconfig option */
 	P_DEFAULT,  /* default y */
 	P_CHOICE,   /* choice value */
-	P_DEPENDS,  /* depends on BAR */
 	P_SELECT,   /* select BAR */
 	P_RANGE,    /* range 7..100 (for a symbol) */
 	P_ENV,      /* value from environment variable */
 	P_SYMBOL,   /* where a symbol is defined */
+
+	P_RAW_DEPENDS,
+	P_RAW_SELECT,
 };
 
 struct property {
