@@ -613,7 +613,7 @@ static bool build_depends_on_clauses(struct symbol *sym)
 {
 	struct property *prop;
 
-	for_all_properties(sym, prop, P_DEPENDS) {
+	for_all_properties(sym, prop, P_RAW_DEPENDS) {
 		struct bool_expr *e[2];
 		struct bool_expr *t1, *t2;
 		struct cnf *cnf;
@@ -645,29 +645,17 @@ static bool build_select_clauses(struct symbol *sym)
 {
 	struct property *prop;
 
-	for_all_properties(sym, prop, P_SELECT) {
+	for_all_properties(sym, prop, P_RAW_SELECT) {
 		struct bool_expr *condition[2];
 		struct bool_expr *e[2];
 		struct bool_expr *t1, *t2, *t3;
 		struct cnf *cnf;
 		struct gstr str1, str2;
 
-		/* XXX: The grammar of the kconfig language allows
-		 * constructs like "config FOO select BAR if BAZ",
-		 * where BAZ is an arbitrary expression. Here, FOO
-		 * is the current value of "sym" and BAR can be
-		 * found in prop->expr. However, BAZ is a bit more
-		 * tricky because it inherits the dependencies of
-		 * FOO. This means that what we're doing here is a
-		 * bit redundant -- it would be a LOT better to
-		 * use BAZ only, but there doesn't seem to be a
-		 * way to get it from the kconfig structures at
-		 * the moment. */
 		if (prop->visible.expr) {
 			expr_to_bool_expr(sym, prop->visible.expr, condition);
 		} else {
 			condition[0] = bool_const(true);
-			/* Not used */
 			condition[1] = bool_const(false);
 		}
 
