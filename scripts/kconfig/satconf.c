@@ -15,93 +15,114 @@
 #include "lkc.h"
 #include "picosat.h"
 
+static unsigned int nr_symbol_variables;
+static struct symbol **symbol_variables;
+
+static unsigned int nr_prompt_variables;
+static struct property **prompt_variables;
+
+/* Total */
 static unsigned int nr_sat_variables;
-static struct symbol **sat_variables;
+
+static bool is_symbol_variable(unsigned int var)
+{
+	unsigned int x = var - 1;
+	return x < nr_symbol_variables;
+}
+
+static bool is_prompt_variable(unsigned int var)
+{
+	unsigned int x = var - 1 - nr_symbol_variables;
+	return x < nr_prompt_variables;
+}
+
+static struct symbol *get_symbol_variable(unsigned int var)
+{
+	assert(is_symbol_variable(var));
+	return symbol_variables[var - 1];
+}
+
+static struct property *get_prompt_variable(unsigned int var)
+{
+	assert(is_prompt_variable(var));
+	return prompt_variables[var - 1 - nr_symbol_variables];
+}
 
 static char **clauses;
 static unsigned int max_clauses;
 static unsigned int nr_clauses;
 
-static void bool_printf(struct bool_expr *e)
-{
-	switch (e->op) {
-	case CONST:
-		printf("%s", e->nullary ? "T" : "F");
-		break;
-	case VAR:
-		printf("%u/%s", e->var, sat_variables[e->var]->name ?: "<choice>");
-		break;
-	case NOT:
-		printf("!");
-		bool_printf(e->unary);
-		break;
-	case AND:
-		printf("(");
-		bool_printf(e->binary.a);
-		printf(" && ");
-		bool_printf(e->binary.b);
-		printf(")");
-		break;
-	case OR:
-		printf("(");
-		bool_printf(e->binary.a);
-		printf(" || ");
-		bool_printf(e->binary.b);
-		printf(")");
-		break;
-	default:
-		assert(false);
-	}
-}
-
 static void assign_sat_variables(void)
 {
 	unsigned int i;
 	struct symbol *sym;
-	unsigned int variable = 0;
+	unsigned int variable = 1;
+	unsigned int symbol_variable = 0;
+	unsigned int prompt_variable = 0;
 
-	assert(nr_sat_variables == 0);
-
-	/* The solver uses variable 0 as an end-of-clause marker. */
-	++nr_sat_variables;
+	assert(nr_symbol_variables == 0);
+	assert(nr_prompt_variables == 0);
 
 	/* Just count the number of variables we'll need */
 	for_all_symbols(i, sym) {
+		struct property *prop;
+
 		switch (sym->type) {
 		case S_BOOLEAN:
-			nr_sat_variables += 1;
+			nr_symbol_variables += 1;
 			break;
 		case S_TRISTATE:
-			nr_sat_variables += 2;
+			nr_symbol_variables += 2;
 			break;
 		default:
 			break;
 		}
+
+		for_all_prompts(sym, prop)
+			nr_prompt_variables += 1;
 	}
 
-	sat_variables = malloc(nr_sat_variables * sizeof(*sat_variables));
-	sat_variables[variable++] = NULL;
+	nr_sat_variables = nr_symbol_variables + nr_prompt_variables;
+	symbol_variables = malloc(nr_symbol_variables * sizeof(*symbol_variables));
+	prompt_variables = malloc(nr_prompt_variables * sizeof(*prompt_variables));
 
 	/* Assign variables to each symbol */
 	for_all_symbols(i, sym) {
 		switch (sym->type) {
 		case S_BOOLEAN:
-			sym->sat_variable = variable;
-			sat_variables[variable++] = sym;
+			sym->sat_variable = variable++;
+			symbol_variables[symbol_variable++] = sym;
 			break;
 		case S_TRISTATE:
 			sym->sat_variable = variable;
-			sat_variables[variable++] = sym;
-			sat_variables[variable++] = sym;
+			variable += 2;
+			symbol_variables[symbol_variable++] = sym;
+			symbol_variables[symbol_variable++] = sym;
 			break;
 		default:
 			break;
 		}
 	}
 
-	assert(variable == nr_sat_variables);
+	assert(symbol_variable == nr_symbol_variables);
 
-	printf("%u variables\n", nr_sat_variables);
+	/* Assign variables to each prompt */
+	for_all_symbols(i, sym) {
+		struct property *prop;
+
+		for_all_prompts(sym, prop) {
+			prop->sat_variable = variable++;
+			prompt_variables[prompt_variable++] = prop;
+		}
+	}
+
+	assert(prompt_variable == nr_prompt_variables);
+
+	assert(symbol_variable + prompt_variable == nr_sat_variables);
+	assert(variable == nr_sat_variables + 1);
+
+	printf("%u variables (%u symbols, %u prompts)\n",
+		nr_sat_variables, nr_symbol_variables, nr_prompt_variables);
 }
 
 static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_expr *result[2]);
@@ -357,11 +378,11 @@ static struct cnf *bool_to_cnf(struct bool_expr *e)
 		return cnf_new();
 
 	case VAR:
-		return cnf_new_single_positive(nr_sat_variables, e->var);
+		return cnf_new_single_positive(nr_sat_variables + 1, e->var);
 
 	case NOT:
 		assert(e->unary->op == VAR);
-		return cnf_new_single_negative(nr_sat_variables, e->unary->var);
+		return cnf_new_single_negative(nr_sat_variables + 1, e->unary->var);
 
 	case AND: {
 		struct cnf *t1, *t2, *ret;
@@ -391,6 +412,16 @@ static struct cnf *bool_to_cnf(struct bool_expr *e)
 		printf("%d\n", e->op);
 		assert(false);
 	}
+}
+
+static const char *get_variable_name(unsigned int var)
+{
+	if (is_symbol_variable(var))
+		return get_symbol_variable(var)->name;
+	if (is_prompt_variable(var))
+		return get_prompt_variable(var)->sym->name;
+
+	assert(false);
 }
 
 static void add_positive(void *priv, unsigned int bit)
@@ -457,6 +488,13 @@ static bool build_choice_clauses(struct symbol *sym)
 
 	assert(sym->type == S_BOOLEAN || sym->type == S_TRISTATE);
 
+	{
+		unsigned int nr_prompts = 0;
+		for_all_prompts(sym, prompt)
+			++nr_prompts;
+		assert(nr_prompts < 2);
+	}
+
 	prompt = sym_get_prompt(sym);
 	assert(prompt);
 
@@ -465,6 +503,22 @@ static bool build_choice_clauses(struct symbol *sym)
 	} else {
 		visible[0] = bool_const(true);
 		visible[1] = bool_const(false);
+	}
+
+	/* If the symbol is not optional, then it must be enabled */
+	if (!sym_is_optional(sym)) {
+		struct bool_expr *t1, *t2;
+		struct cnf *cnf;
+
+		t1 = bool_var(prompt->sat_variable);
+		t2 = bool_dep(visible[0], t1);
+		bool_put(t1);
+
+		cnf = bool_to_cnf(t2);
+		bool_put(t2);
+
+		add_cnf(cnf, "<choice block> is mandatory");
+		cnf_append(kconfig_cnf, cnf);
 	}
 
 	/* If the choice block is not optional, then one of
@@ -498,9 +552,10 @@ static bool build_choice_clauses(struct symbol *sym)
 		bool_put(block);
 
 		cnf = bool_to_cnf(dep);
+		bool_put(dep);
+
 		add_cnf(cnf, "<choice block> depends on <one of the choices>");
 		cnf_append(kconfig_cnf, cnf);
-		bool_put(dep);
 	}
 
 	for_all_choices(sym, prop) {
@@ -578,50 +633,63 @@ static bool build_tristate_clauses(struct symbol *sym)
 
 static bool build_visible(struct symbol *sym)
 {
+	bool has_prompt = false;
 	struct property *prompt;
-	struct bool_expr *e[2];
+	struct bool_expr *cond;
 	struct bool_expr *t1, *t2;
 	struct cnf *cnf;
-	struct gstr str;
 
-	prompt = sym_get_prompt(sym);
-	if (!prompt || !prompt->visible.expr)
+	for_all_prompts(sym, prompt) {
+		has_prompt = true;
+		break;
+	}
+
+	/* Don't actually do anything if there aren't any prompts */
+	if (!has_prompt)
 		return true;
 
-	expr_to_bool_expr(sym, prompt->visible.expr, e);
+	cond = bool_const(false);
+	for_all_prompts(sym, prompt) {
+		struct bool_expr *old_cond;
+		struct bool_expr *t1;
+
+		t1 = bool_var(prompt->sat_variable);
+		cond = bool_or(old_cond = cond, t1);
+		bool_put(old_cond);
+		bool_put(t1);
+	}
 
 	t1 = bool_var(sym->sat_variable);
-	t2 = bool_dep(t1, e[0]);
+	t2 = bool_dep(t1, cond);
+	bool_put(cond);
 	bool_put(t1);
-	bool_put(e[0]);
-	bool_put(e[1]);
 
 	cnf = bool_to_cnf(t2);
-
-	str = str_new();
-	expr_gstr_print(prompt->visible.expr, &str);
-	add_cnf(cnf, "%s visible if %s", sym->name ?: "<choice>", str_get(&str));
-	str_free(&str);
-
-	cnf_append(kconfig_cnf, cnf);
 	bool_put(t2);
 
+	add_cnf(cnf, "%s prompts", sym->name ?: "<choice>");
+	cnf_put(cnf);
 	return true;
 }
 
-static bool build_depends_on_clauses(struct symbol *sym)
+static bool build_prompt_dependency_clauses(struct symbol *sym)
 {
 	struct property *prop;
 
-	for_all_properties(sym, prop, P_RAW_DEPENDS) {
+	for_all_prompts(sym, prop) {
 		struct bool_expr *e[2];
 		struct bool_expr *t1, *t2;
 		struct cnf *cnf;
 		struct gstr str;
 
-		expr_to_bool_expr(sym, prop->expr, e);
+		if (prop->menu->dep) {
+			expr_to_bool_expr(sym, prop->menu->dep, e);
+		} else {
+			e[0] = bool_const(true);
+			e[1] = bool_const(false);
+		}
 
-		t1 = bool_var(sym->sat_variable);
+		t1 = bool_var(prop->sat_variable);
 		t2 = bool_dep(t1, e[0]);
 		bool_put(t1);
 		bool_put(e[0]);
@@ -630,8 +698,8 @@ static bool build_depends_on_clauses(struct symbol *sym)
 		cnf = bool_to_cnf(t2);
 
 		str = str_new();
-		expr_gstr_print(prop->expr, &str);
-		add_cnf(cnf, "%s depends on %s", sym->name ?: "<choice>", str_get(&str));
+		expr_gstr_print(prop->menu->dep, &str);
+		add_cnf(cnf, "%s menu depends on %s", sym->name ?: "<choice>", str_get(&str));
 		str_free(&str);
 
 		cnf_append(kconfig_cnf, cnf);
@@ -641,52 +709,82 @@ static bool build_depends_on_clauses(struct symbol *sym)
 	return true;
 }
 
-static bool build_select_clauses(struct symbol *sym)
+static bool build_select_clauses(struct symbol *sym, struct property *prop)
 {
-	struct property *prop;
+	struct bool_expr *condition[2];
+	struct bool_expr *e[2];
+	struct bool_expr *t1, *t2, *t3;
+	struct cnf *cnf;
+	struct gstr str1, str2;
 
-	for_all_properties(sym, prop, P_RAW_SELECT) {
-		struct bool_expr *condition[2];
-		struct bool_expr *e[2];
-		struct bool_expr *t1, *t2, *t3;
-		struct cnf *cnf;
-		struct gstr str1, str2;
+	/* Verified: select only happens when the prompt it is defined under is _visible_ and
+	 * the select dependencies are satisfied. */
 
-		if (prop->visible.expr) {
-			expr_to_bool_expr(sym, prop->visible.expr, condition);
-		} else {
-			condition[0] = bool_const(true);
-			condition[1] = bool_const(false);
+	if (prop->visible.expr) {
+		expr_to_bool_expr(sym, prop->visible.expr, condition);
+	} else {
+		condition[0] = bool_const(true);
+		condition[1] = bool_const(false);
+	}
+
+	expr_to_bool_expr(sym, prop->expr, e);
+
+	t1 = bool_var(sym->sat_variable);
+	t2 = bool_and(t1, condition[0]);
+	bool_put(t1);
+	bool_put(condition[0]);
+	bool_put(condition[1]);
+	/* XXX: bool_and(e[0], e[1]) */
+	t3 = bool_dep(t2, e[0]);
+	bool_put(t2);
+	bool_put(e[0]);
+	bool_put(e[1]);
+
+	cnf = bool_to_cnf(t3);
+	bool_put(t3);
+
+	str1 = str_new();
+	expr_gstr_print(prop->expr, &str1);
+	str2 = str_new();
+	if (prop->visible.expr) {
+		str_append(&str2, " if ");
+		expr_gstr_print(prop->visible.expr, &str2);
+	}
+	add_cnf(cnf, "%s select %s%s", sym->name ?: "<choice>",
+		str_get(&str1), str_get(&str2));
+	str_free(&str1);
+	str_free(&str2);
+
+	cnf_append(kconfig_cnf, cnf);
+	return true;
+}
+
+static bool build_sym_select_clauses(struct symbol *sym)
+{
+	struct property *prompt;
+	unsigned int nr_prompts;
+
+	nr_prompts = 0;
+	for_all_prompts(sym, prompt) {
+		struct property *prop;
+
+		++nr_prompts;
+
+		/* Find all the selects belonging to this prompt */
+		for_all_properties(sym, prop, P_SELECT) {
+			if (prop->menu != prompt->menu)
+				continue;
+
+			build_select_clauses(sym, prop);
 		}
+	}
 
-		expr_to_bool_expr(sym, prop->expr, e);
+	/* If there are no prompts, then we always perform the select */
+	if (nr_prompts == 0) {
+		struct property *prop;
 
-		t1 = bool_var(sym->sat_variable);
-		t2 = bool_and(t1, condition[0]);
-		bool_put(t1);
-		bool_put(condition[0]);
-		bool_put(condition[1]);
-		t3 = bool_dep(t2, e[0]);
-		bool_put(t2);
-		bool_put(e[0]);
-		bool_put(e[1]);
-
-		cnf = bool_to_cnf(t3);
-
-		str1 = str_new();
-		expr_gstr_print(prop->expr, &str1);
-		str2 = str_new();
-		if (prop->visible.expr) {
-			str_append(&str2, " if ");
-			expr_gstr_print(prop->visible.expr, &str2);
-		}
-		add_cnf(cnf, "%s select %s%s", sym->name ?: "<choice>",
-			str_get(&str1), str_get(&str2));
-		str_free(&str1);
-		str_free(&str2);
-
-		cnf_append(kconfig_cnf, cnf);
-		bool_put(t3);
+		for_all_properties(sym, prop, P_SELECT)
+			build_select_clauses(sym, prop);
 	}
 
 	return true;
@@ -713,13 +811,9 @@ static bool build_clauses(void)
 				return false;
 		}
 
-		if (!build_visible(sym))
+		if (!build_prompt_dependency_clauses(sym))
 			return false;
-
-		if (!build_depends_on_clauses(sym))
-			return false;
-
-		if (!build_select_clauses(sym))
+		if (!build_sym_select_clauses(sym))
 			return false;
 	}
 
@@ -785,120 +879,154 @@ static struct bool_expr *clause_to_bool_except(struct cnf_clause *clause, unsign
 	return data.expr;
 }
 
-static bool build_default_clauses(void)
+static bool build_default_clauses(struct symbol *sym, struct bool_expr *symbol_value[2],
+	unsigned int sat_variable, struct bool_expr *visible,
+	struct property *prop)
+{
+	struct bool_expr *menu_cond[2];
+	struct bool_expr *cond;
+	unsigned int nr_conjuncts;
+	struct cnf_clause *i;
+	struct bool_expr *value[2];
+	struct bool_expr *t1, *t2, *t3, *t4, *t5, *t6, *t7;
+	struct cnf *cnf;
+	struct gstr str1, str2;
+
+	if (prop->visible.expr) {
+		expr_to_bool_expr(sym, prop->visible.expr, menu_cond);
+	} else {
+		menu_cond[0] = bool_const(true);
+		menu_cond[1] = bool_const(false);
+	}
+
+	cond = bool_const(false);
+	nr_conjuncts = 0;
+	for (i = kconfig_cnf->first; i; i = i->next) {
+		struct bool_expr *old_cond;
+		struct bool_expr *conj;
+
+		if (i->positive && bitset_test(i->positive, sat_variable)) {
+			conj = clause_to_bool_except(i, sat_variable);
+		} else if (i->negative && bitset_test(i->negative, sat_variable)) {
+			conj = clause_to_bool_except(i, sat_variable);
+		} else
+			continue;
+
+		cond = bool_or(old_cond = cond, conj);
+		bool_put(old_cond);
+		bool_put(conj);
+
+		++nr_conjuncts;
+	}
+
+	if (nr_conjuncts == 0) {
+		bool_put(cond);
+		cond = bool_const(true);
+	}
+
+	assert(prop->expr);
+	expr_to_bool_expr(NULL, prop->expr, value);
+
+	t1 = bool_eq(value[0], symbol_value[0]);
+	t2 = bool_eq(value[1], symbol_value[1]);
+	bool_put(value[0]);
+	bool_put(value[1]);
+	t3 = bool_and(t1, t2);
+	bool_put(t1);
+	bool_put(t2);
+
+	t4 = bool_and(menu_cond[0], cond);
+	bool_put(menu_cond[0]);
+	bool_put(menu_cond[1]);
+	bool_put(cond);
+
+	t5 = bool_not(visible);
+
+	t6 = bool_and(t4, t5);
+	bool_put(t4);
+	bool_put(t5);
+
+	t7 = bool_dep(t6, t3);
+	bool_put(t6);
+	bool_put(t3);
+
+	cnf = bool_to_cnf(t7);
+	bool_put(t7);
+
+	str1 = str_new();
+	expr_gstr_print(prop->expr, &str1);
+	str2 = str_new();
+
+	if (prop->visible.expr) {
+		str_append(&str2, " if ");
+		expr_gstr_print(prop->visible.expr, &str2);
+	}
+	add_cnf(cnf, "%s default %s%s", sym->name ?: "<choice>",
+		str_get(&str1), str_get(&str2));
+	str_free(&str1);
+	str_free(&str2);
+
+	cnf_put(cnf);
+	return true;
+}
+
+static bool build_all_default_clauses(void)
 {
 	unsigned int i;
 	struct symbol *sym;
-	struct cnf_clause *j;
 
 	/* XXX: This is O(N * M) where N is the number of variables
 	 * and M is the number of clauses. Optimise. */
 	for_all_symbols(i, sym) {
 		struct property *prompt;
-		struct bool_expr *visible[2];
-		struct property *prop;
 		struct bool_expr *symbol_value[2];
+		struct property *prop;
+		unsigned int nr_prompts;
 
 		if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
 			continue;
 
-		if (!sym->name)
-			continue;
-
-		prompt = sym_get_prompt(sym);
-		if (prompt && prompt->visible.expr) {
-			expr_to_bool_expr(sym, prompt->visible.expr, visible);
-		} else {
-			visible[0] = bool_const(false);
-			visible[1] = bool_const(false);
-		}
-
 		symbol_to_bool_expr(sym, symbol_value);
 
-		for_all_defaults(sym, prop) {
-			struct bool_expr *menu_cond[2];
-			struct bool_expr *cond;
-			struct bool_expr *value[2];
-			struct bool_expr *t1, *t2, *t3, *t4, *t5, *t6, *t7;
-			struct cnf *cnf;
-			struct gstr str1, str2;
+		nr_prompts = 0;
+		for_all_prompts(sym, prompt) {
+			struct bool_expr *visible[2];
+			unsigned int nr_defaults;
 
-			if (prop && prop->visible.expr) {
-				expr_to_bool_expr(sym, prop->visible.expr, menu_cond);
-			} else if (prop->menu && prop->menu->dep) {
-				expr_to_bool_expr(sym, prop->menu->dep, menu_cond);
+			++nr_prompts;
+
+			if (prompt->visible.expr) {
+				expr_to_bool_expr(sym, prompt->visible.expr, visible);
 			} else {
-				menu_cond[0] = bool_const(true);
-				menu_cond[1] = bool_const(false);
+				visible[0] = bool_const(true);
+				visible[1] = bool_const(false);
 			}
 
-			cond = bool_const(false);
-
-			for (j = kconfig_cnf->first; j; j = j->next) {
-				struct bool_expr *old_cond;
-				struct bool_expr *conj;
-
-				if (j->positive && bitset_test(j->positive, sym->sat_variable)) {
-					conj = clause_to_bool_except(j, sym->sat_variable);
-				} else if (j->negative && bitset_test(j->negative, sym->sat_variable)) {
-					conj = clause_to_bool_except(j, sym->sat_variable);
-				} else
+			nr_defaults = 0;
+			for_all_defaults(sym, prop) {
+				if (prop->menu != prompt->menu)
 					continue;
 
-				cond = bool_or(old_cond = cond, conj);
-				bool_put(old_cond);
-				bool_put(conj);
+				++nr_defaults;
+				build_default_clauses(sym, symbol_value, prompt->sat_variable, visible[0], prop);
 			}
 
-			assert(prop->expr);
-			expr_to_bool_expr(NULL, prop->expr, value);
-
-			t1 = bool_eq(value[0], symbol_value[0]);
-			t2 = bool_eq(value[1], symbol_value[1]);
-			bool_put(value[0]);
-			bool_put(value[1]);
-			t3 = bool_and(t1, t2);
-			bool_put(t1);
-			bool_put(t2);
-
-			t4 = bool_and(menu_cond[0], cond);
-			bool_put(menu_cond[0]);
-			bool_put(menu_cond[1]);
-			bool_put(cond);
-
-			t5 = bool_not(visible[0]);
-			t6 = bool_and(t4, t5);
-			bool_put(t4);
-			bool_put(t5);
-
-			t7 = bool_dep(t6, t3);
-			bool_put(t6);
-			bool_put(t3);
-
-			cnf = bool_to_cnf(t7);
-			bool_put(t7);
-
-			str1 = str_new();
-			expr_gstr_print(prop->expr, &str1);
-			str2 = str_new();
-
-			if (prop && prop->visible.expr) {
-				str_append(&str2, " if ");
-				expr_gstr_print(prop->visible.expr, &str2);
-			} else if (prop->menu && prop->menu->dep) {
-				str_append(&str2, " if ");
-				expr_gstr_print(prop->menu->dep, &str2);
+#if 0
+			/* Default to 'n' */
+			if (nr_defaults == 0) {
+				build_default_clauses(sym, symbol_value, prompt, visible[0], 
 			}
-			add_cnf(cnf, "%s default %s%s", sym->name ?: "<choice>",
-				str_get(&str1), str_get(&str2));
-			str_free(&str1);
-			str_free(&str2);
+#endif
 
-			cnf_put(cnf);
+			bool_put(visible[0]);
+			bool_put(visible[1]);
 		}
 
-		bool_put(visible[0]);
-		bool_put(visible[1]);
+		if (nr_prompts == 0) {
+			for_all_defaults(sym, prop) {
+				build_default_clauses(sym, symbol_value, sym->sat_variable, bool_const(false), prop);
+			}
+		}
 
 		bool_put(symbol_value[0]);
 		bool_put(symbol_value[1]);
@@ -977,7 +1105,7 @@ int main(int argc, char *argv[])
 	}
 
 	assign_sat_variables();
-	picosat_adjust(nr_sat_variables);
+	picosat_adjust(1 + nr_sat_variables);
 
 	{
 		/* Modules are preferred over built-ins; tell that to the
@@ -1009,16 +1137,30 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-	if (!build_default_clauses()) {
+	if (!build_all_default_clauses()) {
 		fprintf(stderr, "error: inconsistent kconfig files while "
 			"building default clauses\n");
 		exit(EXIT_FAILURE);
+	}
+
+	{
+		unsigned int i;
+		struct symbol *sym;
+
+		for_all_symbols(i, sym) {
+			if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
+				continue;
+			if (!build_visible(sym))
+				return false;
+		}
 	}
 
 	cnf_put(kconfig_cnf);
 
 	assert(nr_bool_created == nr_bool_destroyed);
 	assert(nr_cnf_created == nr_cnf_destroyed);
+
+	printf("%u clauses\n", nr_clauses);
 
 	{
 		/* First do a check to see if the instance is solvable
@@ -1033,7 +1175,7 @@ int main(int argc, char *argv[])
 
 			for (i = 0; i < nr_clauses; ++i) {
 				if (picosat_coreclause(i))
-					fprintf(stderr, "clause: %s\n", clauses[i]);
+					fprintf(stderr, "clause: %d: %s\n", i, clauses[i]);
 			}
 
 			exit(EXIT_FAILURE);
