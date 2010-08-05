@@ -165,6 +165,8 @@ struct property {
 	                            * P_PROMPT, P_DEFAULT, P_MENU, P_COMMENT */
 	struct file *file;         /* what file was this property defined */
 	int lineno;                /* what lineno was this property defined */
+
+	unsigned int sat_variable; /* P_PROMPT */
 };
 
 #define for_all_properties(sym, st, tok) \
