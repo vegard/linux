@@ -564,6 +564,7 @@ static bool build_choice_clauses(struct symbol *sym)
 
 		expr_list_for_each_sym(prop->expr, expr, choice) {
 			struct bool_expr *exclusive;
+			struct bool_expr *var;
 			struct bool_expr *dep;
 			struct cnf *cnf;
 
@@ -586,11 +587,14 @@ static bool build_choice_clauses(struct symbol *sym)
 				exclusive = t3;
 			}
 
-			dep = bool_dep(visible[0], exclusive);
+			var = bool_var(choice->sat_variable);
+			dep = bool_dep(var, exclusive);
+			bool_put(var);
 			bool_put(exclusive);
 
 			cnf = bool_to_cnf(dep);
-			add_cnf(cnf, "<choice block> can have at most one option set");
+			add_cnf(cnf, "<choice block> can have at most one option set (%s)",
+				choice->name ?: "<choice>");
 			cnf_append(kconfig_cnf, cnf);
 			bool_put(dep);
 		}
