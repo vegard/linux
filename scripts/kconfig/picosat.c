@@ -501,6 +501,7 @@ static Lit **ttailado;
 static unsigned adecidelevel;
 static Lit **als, **alshead, **alstail, **eoals;
 static int *fals, *falshead, *eofals;
+static int *mass, szmass;
 static Lit *failed_assumption;
 static int extracted_all_failed_assumptions;
 static Rnk **heap, **hhead, **eoh;
@@ -1452,6 +1453,9 @@ reset (void)
   adecidelevel = 0;
   DELETEN (fals, eofals - fals);
   fals = eofals = falshead = 0;
+  DELETEN (mass, szmass);
+  szmass = 0;
+  mass = 0;
 
   size_vars = 0;
   max_var = 0;
@@ -6585,15 +6589,17 @@ picosat_set_verbosity (int new_verbosity_level)
   verbosity = new_verbosity_level;
 }
 
-void
+int
 picosat_enable_trace_generation (void)
 {
+  int res = 0;
   check_ready ();
 #ifdef TRACE
   ABORTIF (addedclauses, 
            "API usage: trace generation enabled after adding clauses");
-  trace = 1;
+  res = trace = 1;
 #endif
+  return res;
 }
 
 void
@@ -6990,6 +6996,178 @@ picosat_failed_assumptions (void)
     ENLARGE (fals, falshead, eofals);
   *falshead++ = 0;
   return fals;
+}
+
+static const char * enumstr (int i) {
+  int last = i % 10;
+  if (last == 1) return "st";
+  if (last == 2) return "nd";
+  if (last == 3) return "rd";
+  return "th";
+}
+
+const int *
+picosat_mus_assumptions (void * s, void (*cb)(void*,const int*), int fix)
+{
+  int i, j, ilit, len, oldlen, norig = alshead - als, nwork, * work, res;
+  signed char * redundant;
+  Lit ** p, * lit;
+  int failed;
+  Var * v;
+
+  check_ready ();
+  check_unsat_state ();
+  len = 0;
+  if (!mtcls) 
+    {
+      assert (failed_assumption);
+      if (!extracted_all_failed_assumptions)
+	extract_all_failed_assumptions ();
+
+      for (p = als; p < alshead; p++)
+	if (LIT2VAR (*p)->failed)
+	  len++;
+    }
+
+  if (mass)
+    DELETEN (mass, szmass);
+  szmass = len + 1;
+  NEWN (mass, szmass);
+
+  i = 0;
+  for (p = als; p < alshead; p++)
+    {
+      lit = *p;
+      v = LIT2VAR (lit);
+      if (!v->failed)
+	continue;
+      ilit = LIT2INT (lit);
+      assert (i < len);
+      mass[i++] = ilit;
+    }
+  assert (i == len);
+  mass[i] = 0;
+  if (verbosity)
+    fprintf (out, 
+      "%sinitial set of failed assumptions of size %d out of %d (%.0f%%)\n",
+      prefix, len, norig, PERCENT (len, norig));
+  if (cb)
+    cb (s, mass);
+
+  nwork = len;
+  NEWN (work, nwork);
+  for (i = 0; i < len; i++)
+    work[i] = mass[i];
+
+  NEWN (redundant, nwork);
+  CLRN (redundant, nwork);
+
+  for (i = 0; i < nwork; i++)
+    {
+      if (redundant[i])
+	continue;
+
+      if (verbosity > 1)
+	fprintf (out,
+	         "%strying to drop %d%s assumption %d\n", 
+		 prefix, i, enumstr (i), work[i]);
+      for (j = 0; j < nwork; j++)
+	if (i != j && !redundant[j])
+	  picosat_assume (work[j]);
+
+      res = picosat_sat (-1);
+      if (res == 10)
+	{
+	  if (verbosity > 1)
+	    fprintf (out,
+		     "%sfailed to drop %d%s assumption %d\n", 
+		     prefix, i, enumstr (i), work[i]);
+
+	  if (fix)
+	    {
+	      picosat_add (work[i]);
+	      picosat_add (0);
+	    }
+	}
+      else
+	{
+	  assert (res == 20);
+	  if (verbosity > 1)
+	    fprintf (out,
+		     "%ssuceeded to drop %d%s assumption %d\n", 
+		     prefix, i, enumstr (i), work[i]);
+	  redundant[i] = 1;
+	  for (j = 0; j < nwork; j++)
+	    {
+	      failed = picosat_failed_assumption (work[j]);
+	      if (j <= i) 
+		{
+		  assert (redundant[j] == !failed);
+		  continue;
+		}
+
+	      if (!failed)
+		{
+		  redundant[j] = -1;
+		  if (verbosity > 1)
+		    fprintf (out,
+			     "%salso suceeded to drop %d%s assumption %d\n", 
+			     prefix, j, enumstr (j), work[j]);
+		}
+	    }
+
+	    oldlen = len;
+	    len = 0;
+	    for (j = 0; j < nwork; j++)
+	      if (!redundant[j])
+		mass[len++] = work[j];
+	    mass[len] = 0;
+	    assert (len < oldlen);
+
+	    if (fix)
+	      {
+		picosat_add (-work[i]);
+		picosat_add (0);
+	      }
+
+#ifndef NDEBUG
+	    for (j = 0; j <= i; j++)
+	      assert (redundant[j] >= 0);
+#endif
+	    for (j = i + 1; j < nwork; j++) 
+	      {
+		if (redundant[j] >= 0)
+		  continue;
+
+		if (fix)
+		  {
+		    picosat_add (-work[j]);
+		    picosat_add (0);
+		  }
+
+		redundant[j] = 1;
+	      }
+
+	    if (verbosity)
+	      fprintf (out, 
+	"%sreduced set of failed assumptions of size %d out of %d (%.0f%%)\n",
+		prefix, len, norig, PERCENT (len, norig));
+	    if (cb)
+	      cb (s, mass);
+	}
+    }
+
+  DELETEN (work, nwork);
+  DELETEN (redundant, nwork);
+
+  if (verbosity)
+    fprintf (out, "%sreinitializaing unsat state", prefix);
+  for (i = 0; i < len; i++)
+    picosat_assume (mass[i]);
+  res = picosat_sat (-1);
+  assert (res == 20);
+
+  return mass;
 }
 
 int
@@ -7551,4 +7729,3 @@ picosat_haveados (void)
   return 0;
 #endif
 }
-
