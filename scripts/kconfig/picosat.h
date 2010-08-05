@@ -174,8 +174,11 @@ void picosat_set_seed (unsigned random_number_generator_seed);
  * configure picosat with full optimzation as './configure -O' or with
  * './configure --no-trace'.  This speeds up the solver slightly.  Then you
  * you do not get any results by trying to generate traces.
+ *
+ * The return value is non-zero if code for generating traces is including
+ * and it is zero if traces can not be generated.
  */
-void picosat_enable_trace_generation (void);
+int picosat_enable_trace_generation (void);
 
 /* You can dump proof traces in RUP format incrementally even without
  * keeping the proof trace in memory.  The advantage is a reduction of
@@ -226,17 +229,6 @@ double picosat_seconds (void);
  * this literal respectively the trailing zero belong starting at 0.
  */
 int picosat_add (int lit);
-
-/* As the previous function, but allows to add a full clause at once with an
- * at compiled time known size.  The list of argument literals has to be
- * terminated with a zero literal.  Literals beyond the first zero literal
- * are discarded.
- */
-int picosat_add_arg (int lit, ...);
-
-/* As the previous function but with an at compile time unknown size.
- */
-int picosat_add_lits (int * lits);
 
 /* Print the CNF to the given file in DIMACS format.
  */
@@ -348,7 +340,7 @@ void picosat_set_propagation_limit (unsigned long long limit);
 
 /* Return last result of calling 'picosat_sat' or '0' if not called.
  */
-int picosat_res (void);
+int picosat_res ();
 
 /* After 'picosat_sat' was called and returned 'PICOSAT_SATISFIABLE', then
  * the satisfying assignment can be obtained by 'dereferencing' literals.
@@ -381,17 +373,31 @@ int picosat_failed_assumption (int lit);
 
 /* Returns a zero terminated list of failed assumption in the last call to
  * 'picosat_sat'.  The pointer is valid until the next call to
- * 'picosat_sat'.  It only makes sense if the last call to 'picosat_sat'
- * returned 'PICOSAT_UNSATISFIABLE'.
+ * 'picosat_sat' or 'picosat_failed_assumptions'.  It only makes sense if the
+ * last call to 'picosat_sat' returned 'PICOSAT_UNSATISFIABLE'.
  */
 const int * picosat_failed_assumptions (void);
 
-/* Returns a zero terminated minimal list of failed assumption in the last
- * call to 'picosat_sat'.  The pointer is valid until the next call to
- * 'picosat_sat'.  It only makes sense if the last call to 'picosat_sat'
- * returned 'PICOSAT_UNSATISFIABLE'.
+/* Returns a zero terminated minimized list of failed assumption for the last
+ * call to 'picosat_sat'.  The pointer is valid until the next call to this
+ * function or 'picosat_sat' or 'picosat_mus_assumptions'.  It only makes sense
+ * if the last call to 'picosat_sat' returned 'PICOSAT_UNSATISFIABLE'.
+ *
+ * The
+ * call back function is called for all succesful simplification attempts.  The
+ * first argument of the call back function is the state given as first
+ * argument to 'picosat_mus_assumptions'.  The second argument to the call back
+ * function is the new reduced list of failed assumptions.
+ *
+ * This function will call 'picosat_assume' and 'picosat_sat' internally but
+ * before returning reestablish a proper UNSAT state, e.g.
+ * 'picosat_failed_assumption' will work afterwards as expected.
+ *
+ * The last argument if non zero fixes assumptions.  In particular, if an
+ * assumption can not be removed it is permanently assigned true, otherwise
+ * if it turns out to be redundant it is permanently assumed to be false.
  */
-const int * picosat_minimal_set_of_failed_assumptions (void);
+const int * picosat_mus_assumptions (void *, void(*)(void*,const int*),int);
 
 /*------------------------------------------------------------------------*/
 /* Assume that a previous call to 'picosat_sat' in incremental usage,
