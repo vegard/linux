@@ -523,8 +523,12 @@ static bool build_choice_clauses(struct symbol *sym)
 
 	/* If the choice block is not optional, then one of
 	 * options must be set. */
+	/* XXX: Exception: If none of the choices are visible, then
+	 * no option must be set. */
 	if (!(sym->flags & SYMBOL_OPTIONAL)) {
 		struct bool_expr *block;
+		struct bool_expr *any_visible;
+		struct bool_expr *t1;
 		struct bool_expr *dep;
 		struct cnf *cnf;
 
@@ -536,7 +540,6 @@ static bool build_choice_clauses(struct symbol *sym)
 			struct symbol *choice;
 
 			assert(prop->expr->type == E_LIST);
-
 			expr_list_for_each_sym(prop->expr, expr, choice) {
 				struct bool_expr *t1, *t2;
 
@@ -548,7 +551,56 @@ static bool build_choice_clauses(struct symbol *sym)
 			}
 		}
 
-		dep = bool_dep(visible[0], block);
+		/* This is a disjunction of the visibility of all the choice prompts */
+		any_visible = bool_const(false);
+
+		for_all_choices(sym, prop) {
+			struct expr *expr;
+			struct symbol *choice;
+
+			assert(prop->expr->type == E_LIST);
+			expr_list_for_each_sym(prop->expr, expr, choice) {
+				struct property *prompt;
+
+				for_all_prompts(choice, prompt) {
+					struct bool_expr *visible[2];
+					struct bool_expr *old_any_visible;
+
+					/* XXX: Also use prompt->expr? */
+					if (prompt->visible.expr) {
+						struct bool_expr *t1, *t2, *t3;
+
+						expr_to_bool_expr(choice, prompt->visible.expr, visible);
+
+						/* XXX: Replace in visible[1] too? */
+						/* XXX: Replace sat_variable + 1 too? */
+						t1 = bool_var(sym->sat_variable);
+						t2 = bool_const(true);
+
+						/* Assume that choice block is visible when we decide
+						 * whether or not a choice is visible. */
+						visible[0] = bool_replace(t3 = visible[0], t1, t2);
+						bool_put(t1);
+						bool_put(t2);
+						bool_put(t3);
+					} else {
+						visible[0] = bool_const(true);
+						visible[1] = bool_const(false);
+					}
+
+					any_visible = bool_or(old_any_visible = any_visible, visible[0]);
+					bool_put(old_any_visible);
+					bool_put(visible[0]);
+					bool_put(visible[1]);
+				}
+			}
+		}
+
+		t1 = bool_and(visible[0], any_visible);
+		bool_put(any_visible);
+
+		dep = bool_dep(t1, block);
+		bool_put(t1);
 		bool_put(block);
 
 		cnf = bool_to_cnf(dep);
@@ -686,11 +738,24 @@ static bool build_prompt_dependency_clauses(struct symbol *sym)
 		struct cnf *cnf;
 		struct gstr str;
 
-		if (prop->menu->dep) {
-			expr_to_bool_expr(sym, prop->menu->dep, e);
+		/* XXX: Is this Correct? Is this Good? As to the first, I
+		 * am uncertain of whether we should in build_choice_clauses
+		 * also use the prompt's "conditional part". As to the
+		 * second, whether that would invalidate this effort here. */
+		if (sym_is_choice_value(sym)) {
+			if (prop->visible.expr) {
+				expr_to_bool_expr(sym, prop->visible.expr, e);
+			} else {
+				e[0] = bool_const(true);
+				e[1] = bool_const(false);
+			}
 		} else {
-			e[0] = bool_const(true);
-			e[1] = bool_const(false);
+			if (prop->menu->dep) {
+				expr_to_bool_expr(sym, prop->menu->dep, e);
+			} else {
+				e[0] = bool_const(true);
+				e[1] = bool_const(false);
+			}
 		}
 
 		t1 = bool_var(prop->sat_variable);
@@ -702,7 +767,10 @@ static bool build_prompt_dependency_clauses(struct symbol *sym)
 		cnf = bool_to_cnf(t2);
 
 		str = str_new();
-		expr_gstr_print(prop->menu->dep, &str);
+		if (sym_is_choice_value(sym))
+			expr_gstr_print(prop->visible.expr, &str);
+		else
+			expr_gstr_print(prop->menu->dep, &str);
 		add_cnf(cnf, "%s menu depends on %s", sym->name ?: "<choice>", str_get(&str));
 		str_free(&str);
 
@@ -990,6 +1058,14 @@ static bool build_all_default_clauses(void)
 		if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
 			continue;
 
+		/* Choice defaults are interpreted differently */
+		if (sym_is_choice(sym))
+			continue;
+
+		/* Choice values don't have defaults */
+		if (sym_is_choice_value(sym))
+			continue;
+
 		symbol_to_bool_expr(sym, symbol_value);
 
 		nr_prompts = 0;
@@ -1052,7 +1128,7 @@ static void check_sym_value(struct symbol *sym, tristate value)
 	if (sym->curr.tri == value)
 		return;
 
-#if 0
+#if 1
 	fprintf(stderr, "warning: symbol %s changed from %s to %s\n",
 		sym->name ?: "<choice>",
 		tristate_names[value],
