@@ -243,4 +243,91 @@ static struct bool_expr *bool_eq(struct bool_expr *a, struct bool_expr *b)
 	return ret;
 }
 
+static struct bool_expr *bool_replace(struct bool_expr *haystack,
+	struct bool_expr *needle, struct bool_expr *replacement)
+{
+	if (bool_equal(haystack, needle))
+		return bool_get(replacement);
+
+	switch (haystack->op) {
+	case CONST:
+	case VAR:
+		return bool_get(haystack);
+	case NOT:
+	{
+		struct bool_expr *t1;
+		struct bool_expr *res;
+
+		t1 = bool_replace(haystack->unary, needle, replacement);
+		res = bool_not(t1);
+		bool_put(t1);
+		return res;
+	}
+
+	case AND:
+	{
+		struct bool_expr *t1, *t2;
+		struct bool_expr *res;
+
+		t1 = bool_replace(haystack->binary.a, needle, replacement);
+		t2 = bool_replace(haystack->binary.b, needle, replacement);
+		res = bool_and(t1, t2);
+		bool_put(t1);
+		bool_put(t2);
+		return res;
+	}
+
+	case OR:
+	{
+		struct bool_expr *t1, *t2;
+		struct bool_expr *res;
+
+		t1 = bool_replace(haystack->binary.a, needle, replacement);
+		t2 = bool_replace(haystack->binary.b, needle, replacement);
+		res = bool_or(t1, t2);
+		bool_put(t1);
+		bool_put(t2);
+		return res;
+	}
+
+	default:
+		assert(false);
+	}
+}
+
+static void bool_fprint(FILE *out, struct bool_expr *e)
+{
+	assert(e);
+
+	switch (e->op) {
+	case CONST:
+		fprintf(out, "%s", e->nullary ? "true" : "false");
+		break;
+	case VAR:
+		fprintf(out, "%u", e->var);
+		break;
+	case NOT:
+		fprintf(out, "!");
+		bool_fprint(out, e->unary);
+		break;
+	case AND:
+		fprintf(out, "(");
+		bool_fprint(out, e->binary.a);
+		fprintf(out, " && ");
+		bool_fprint(out, e->binary.b);
+		fprintf(out, ")");
+		break;
+	case OR:
+		fprintf(out, "(");
+		bool_fprint(out, e->binary.a);
+		fprintf(out, " || ");
+		bool_fprint(out, e->binary.b);
+		fprintf(out, ")");
+		break;
+
+	default:
+		assert(false);
+	}
+}
+
 #endif
