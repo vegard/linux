@@ -18,12 +18,13 @@ Contents
 2.3. Negation
 2.4. Conjunction
 2.5. Disjunction
-3. Dependencies
+3. Symbols and prompts.
 3.1. “depends on”
 3.2. “select if”
 4. Choice groups
 5. Defaults
 A. References
+B. To-do
 
 
 1. Expressions
@@ -231,17 +232,33 @@ Here, we can create three groups of 0s:
 	           ≡ (A_y ∨ B_y) ∧ (A_y → A_m) ∧ (B_y → B_m)
 
 
-3. Dependencies
----------------
+3. Symbols and prompts
+----------------------
+
+It is very important to keep in mind that symbols and prompts are two
+different things. Symbols have a value, and it is the symbols that are used in
+Kbuild makefiles and the rest of the kernel sources.
+
+Every prompt belongs to a symbol, but a symbol can have any number of prompts.
+Symbols don't themselves have dependencies, but prompts do. Prompts have two
+kinds of dependencies: Firstly, a prompt may depend on an arbitrary kconfig
+expression in order to be merely visible. Secondly, a prompt may depend on an
+arbitrary kconfig expression in order to be selected. (Note that a prompt may
+be selected even though it is invisible -- for example if it defaults to a
+true value.)
+
+Symbols depend on at least one of their prompts being selected in order to
+have a true value.
+
 
 3.1. “depends on”
 -----------------
 
-The “depends on” directive takes two arguments, the current symbol (the
+The “depends on” directive takes two arguments, the current prompt (the
 depender) S, and a kconfig expression X (the dependency itself). The boolean
 formula for this constraint is as follows:
 
-	S_y → X_y
+	P_y → X_y
 
 
 3.2. “select”
@@ -269,6 +286,42 @@ XXX: Write me.
 
 
 A. References
-----------
+-------------
 
 1: Documentation/kbuild/kconfig-language.txt
+
+
+B. To-do
+--------
+
+* Minimum unsatisfiable core set
+
+	We could possibly use picosat_mus_assumptions() for better error reporting.
+
+* Fix the performance of default clause generation
+
+	build_all_default_clauses() currently has a slow implementation for
+	matching clauses and symbols because it has a double loop, iterating
+	first over all symbols, and then over all clauses. Ideally, each
+	symbol would have a list of clauses where any of its variables
+	participate, and we would only have to traverse this list once it
+	has been built.
+
+* Fix handling of string/int/hex-type symbols
+
+	Currently, all string/int/hex-type symbols must have a value assigned
+	in either the default config or the .satconfig file, because their
+	values are seen as assumptions by satconfig.
+
+	Because of this, kconfig may decide to change a _lot_ of the symbol
+	values on the first run if there was no .config file to begin with,
+	simply because it doesn't have any sensible defaults for these
+	symbols.
+
+	We should instead find all the places where such a symbol is compared
+	to a string or number, for example in “depends on FOO=10”, and add
+	the value to a list of possible choices for this variable.
+
+	The symbol then becomes a sort of choice block where all the options
+	are mutually exclusive; the solver can then find the best value if the
+	user didn't specify a particular value in their .satconfig.
