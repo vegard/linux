@@ -866,8 +866,6 @@ static bool build_clauses(void)
 {
 	unsigned int i;
 	struct symbol *sym;
-	struct symbol *modules_sym = sym_find("MODULES");
-	assert(modules_sym);
 
 	for_all_symbols(i, sym) {
 		if (sym->flags & SYMBOL_CHOICE) {
@@ -1202,12 +1200,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	{
-		struct symbol *modules_sym = sym_find("MODULES");
-		assert(modules_sym);
-
-		picosat_set_default_phase_lit(modules_sym->sat_variable, 1);
-	}
+	picosat_set_default_phase_lit(modules_sym->sat_variable, 1);
 
 	kconfig_cnf = bool_to_cnf(bool_const(true));
 
