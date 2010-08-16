@@ -24,7 +24,10 @@ Contents
 4. Choice groups
 5. Defaults
 A. References
-B. To-do
+B. Hacking
+B.1. Overview
+B.2. Tips
+C. To-do
 
 
 1. Expressions
@@ -289,9 +292,74 @@ A. References
 -------------
 
 1: Documentation/kbuild/kconfig-language.txt
+2: http://en.wikipedia.org/wiki/Negation_normal_form
+3: http://en.wikipedia.org/wiki/Conjunctive_normal_form
 
 
-B. To-do
+B. Hacking
+----------
+
+B.1. Overview
+-------------
+
+Most of the code in satconf.c deals with translating the kconfig constraints
+into boolean logic. The first part of this process is mapping kconfig symbols
+and prompts to boolean variables and vice versa. The boolean variables are
+part of the interface between satconfig and the SAT solver library (PicoSAT)
+and are simply represented by integers. This mapping is mostly performed in
+assign_sat_variables(), after which you can use a struct symbol's or struct
+property's sat_variable members to obtain that symbol's or property's sat
+variable.
+
+Intermediary boolean expressions are represented using 'struct bool_expr'
+(bool.h). In short, these expressions are trees where the leaves are constants
+(true and false) or variables. The boolean expression constructors ensure that
+the expression is always in NNF (Negation Normal Form [2]).
+
+When a constraint is submitted to the SAT solver, it must first be converted
+to CNF (Clausal Normal Form [3]). This is done using bool_to_cnf(), and the
+result is a 'struct cnf' that is equivalent to the boolean expression.
+
+The code that deals with generating clauses is spread out in a number of
+functions, usually called build_*_clauses() or similar, where the * denotes a
+mnemonic of a particular aspect of the kconfig language (such as default
+values, or select directives).
+
+Clause generation is divided in three steps: 1) Dependencies, 2) defaults, and
+3) symbol/prompts-dependencies. The reason for this is that step #2 requires
+access to the clauses generated in step #1 (and not the clauses generated in
+step #3).
+
+Defaults are handled in the following way: Each clause from step #1 will be a
+disjunction (X₀ ∨ X₁ ∨ X₂ ∨ ...), but can be seen as an implication
+(¬X₁ ∧ ¬X₂ ∧ ...) → X₀. In this way, by looking at the clauses containing X₀,
+we obtain all the ways in which the literal X₀ may forced by a combination of
+other literals. Then, for each default, if the default's prompt is not forced
+by any combination of other literals, the default itself forces the prompt to
+a particular value (this becomes one or more new clauses that are also taken
+into consideration when running the solver).
+
+The clauses from step #1 are therefore, in addition to being submitted to the
+solver, appended to the “big” CNF formula of the variable kconfig_cnf in order
+to be extractable by step #2.
+
+Step #3 (calls to build_visible()) should not be taken into consideration when
+building the default clauses, as all it does is give symbols a true value if
+one of its prompts have a true value, and therefore needs to be performed as a
+separate step after building the default clauses.
+
+
+B.2. Tips
+---------
+
+* http://userweb.kernel.org/~vegard/gsoc2010/patches/0001--DEBUG-kconfig-satconfig-dump-clauses-as-they-are.patch
+
+	Use this patch to see clauses as they are generated. This can be
+	helpful when debugging, to see if the clauses end up looking as
+	expected.
+
+
+C. To-do
 --------
 
 * Minimum unsatisfiable core set
