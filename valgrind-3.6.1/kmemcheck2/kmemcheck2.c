@@ -13,7 +13,7 @@ static void failure_exit(void)
 
 static void log_bytes(char *str, int n)
 {
-	printk(KERN_DEBUG "%.*s\n", n, str);
+	printk("%.*s", n, str);
 }
 
 static Bool chase_into_ok(void *private, Addr64 addr)
@@ -114,7 +114,7 @@ int __init kmemcheck2_init(void)
 
 	args.preamble_function = NULL;
 
-	args.traceflags = -1;
+	args.traceflags = 0;
 
 	args.dispatch = &dispatch;
 
