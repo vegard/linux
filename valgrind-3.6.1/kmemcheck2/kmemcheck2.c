@@ -71,6 +71,22 @@ static void dispatch(void)
 	/* Just return */
 }
 
+static IRSB *kmemcheck2_instrument(void *data, IRSB *sb_in, VexGuestLayout *layout, VexGuestExtents *vge, IRType gwt, IRType hwt)
+{
+	printk(KERN_DEBUG "kmemcheck2_instrument");
+
+	Int i;
+	for (i = 0; i < sb_in->stmts_used; ++i) {
+		IRStmt *st = sb_in->stmts[i];
+
+		printk(KERN_DEBUG "ppIRStmt(): ");
+		ppIRStmt(st);
+		printk("\n");
+	}
+
+	return sb_in;
+}
+
 int __init kmemcheck2_init(void)
 {
 	LibVEX_Init(&failure_exit, &log_bytes, 1, false, &clo_vex_control);
@@ -106,7 +122,7 @@ int __init kmemcheck2_init(void)
 	args.host_bytes_size = PAGE_SIZE;
 	args.host_bytes_used = &host_bytes_used;
 
-	args.instrument1 = NULL;
+	args.instrument1 = &kmemcheck2_instrument;
 	args.instrument2 = NULL;
 	args.finaltidy = NULL;
 
