@@ -1,5 +1,6 @@
 #include <linux/gfp.h>
 #include <linux/init.h>
+#include <linux/module.h>
 #include <linux/kallsyms.h>
 #include <linux/kernel.h>
 #include <linux/rbtree.h>
@@ -73,20 +74,33 @@ static void dispatch(void)
 	/* Just return */
 }
 
-static IRSB *kmemcheck2_instrument(void *data, IRSB *sb_in, VexGuestLayout *layout, VexGuestExtents *vge, IRType gwt, IRType hwt)
-{
-	printk(KERN_DEBUG "kmemcheck2_instrument");
 
+
+static IRSB *kmemcheck2_instrument(void *data, IRSB *sb_in,
+	VexGuestLayout *layout, VexGuestExtents *vge,
+	IRType gwt, IRType hwt)
+{
 	Int i;
+	IRSB *sb_out;
+	char symname[KSYM_SYMBOL_LEN];
+
+	sb_out = deepCopyIRSBExceptStmts(sb_in);
+	symname[0] = '\0';
+
 	for (i = 0; i < sb_in->stmts_used; ++i) {
 		IRStmt *st = sb_in->stmts[i];
 
-		printk(KERN_DEBUG "ppIRStmt(): ");
+		if (st->tag == Ist_IMark)
+			sprint_symbol(symname, st->Ist.IMark.addr);
+
+		printk(KERN_DEBUG "%s: ", symname);
 		ppIRStmt(st);
 		printk("\n");
+
+		addStmtToIRSB(sb_out, st);
 	}
 
-	return sb_in;
+	return sb_out;
 }
 
 static struct rb_root kmemcheck2_translations;
