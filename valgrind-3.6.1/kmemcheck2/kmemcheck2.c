@@ -249,10 +249,8 @@ void *kmemcheck2_translate(void *addr)
 	 * node only once. (We currently do it once for lookup and once
 	 * for insertion if it's not there.) */
 	t = rb_search_translations(addr);
-	if (t) {
-		printk(KERN_DEBUG "kmemcheck2_translate: found in cache!\n");
+	if (t)
 		goto out;
-	}
 
 	t = kmalloc(sizeof(*t), GFP_KERNEL);
 	/* XXX: Check result */BUG_ON(!t);
