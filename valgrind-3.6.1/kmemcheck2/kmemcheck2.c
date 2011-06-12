@@ -1,6 +1,8 @@
 #include <linux/gfp.h>
 #include <linux/init.h>
+#include <linux/kallsyms.h>
 #include <linux/kernel.h>
+#include <linux/rbtree.h>
 #include <linux/slab.h>
 
 #include <libvex.h>
@@ -87,12 +89,75 @@ static IRSB *kmemcheck2_instrument(void *data, IRSB *sb_in, VexGuestLayout *layo
 	return sb_in;
 }
 
-int __init kmemcheck2_init(void)
+static struct rb_root kmemcheck2_translations;
+
+struct kmemcheck2_translation {
+	struct rb_node node;
+
+	void *original;
+	void *translated;
+};
+
+static inline struct kmemcheck2_translation *
+rb_search_translations(void *address)
 {
-	LibVEX_Init(&failure_exit, &log_bytes, 1, false, &clo_vex_control);
+	struct rb_node *n = kmemcheck2_translations.rb_node;
+	struct kmemcheck2_translation *t;
 
-	VexTranslateArgs args;
+	while (n) {
+		t = rb_entry(n, struct kmemcheck2_translation, node);
+		if (address < t->original)
+			n = n->rb_left;
+		else if (address > t->original)
+			n = n->rb_right;
+		else
+			return t;
+	}
 
+	return NULL;
+}
+
+static inline struct kmemcheck2_translation *
+__rb_insert_translation(void *address, struct rb_node *node)
+{
+	struct rb_node **p = &kmemcheck2_translations.rb_node;
+	struct rb_node *parent = NULL;
+	struct kmemcheck2_translation *t;
+
+	while (*p) {
+		parent = *p;
+
+		t = rb_entry(parent, struct kmemcheck2_translation, node);
+		if (address < t->original)
+			p = &(*p)->rb_left;
+		else if (address > t->original)
+			p = &(*p)->rb_right;
+		else
+			return t;
+	}
+
+	rb_link_node(node, parent, p);
+	return NULL;
+}
+
+static inline struct kmemcheck2_translation *
+rb_insert_translation(void *address, struct rb_node *node)
+{
+	struct kmemcheck2_translation *ret;
+
+	ret = __rb_insert_translation(address, node);
+	if (!ret)
+		rb_insert_color(node, &kmemcheck2_translations);
+
+	return ret;
+}
+
+static VexTranslateArgs args;
+static VexGuestExtents extents;
+static Int host_bytes_used;
+
+static void kmemcheck2_translate_init(void)
+{
 	args.arch_guest = KMEMCHECK2_VEX_ARCH;
 	args.archinfo_guest = arch_info;
 	args.arch_host = KMEMCHECK2_VEX_ARCH;
@@ -101,12 +166,8 @@ int __init kmemcheck2_init(void)
 
 	args.callback_opaque = NULL;
 
-	args.guest_bytes = (void *) &translated_code;
-	args.guest_bytes_addr = (Addr64) &translated_code;
-
 	args.chase_into_ok = &chase_into_ok;
 
-	VexGuestExtents extents;
 	extents.base[0] = 0;
 	extents.base[1] = 0;
 	extents.base[2] = 0;
@@ -117,9 +178,8 @@ int __init kmemcheck2_init(void)
 
 	args.guest_extents = &extents;
 
-	Int host_bytes_used = 0;
-	args.host_bytes = kmalloc(PAGE_SIZE, GFP_KERNEL);
-	args.host_bytes_size = PAGE_SIZE;
+	args.host_bytes = NULL;
+	args.host_bytes_size = 0;
 	args.host_bytes_used = &host_bytes_used;
 
 	args.instrument1 = &kmemcheck2_instrument;
@@ -133,22 +193,75 @@ int __init kmemcheck2_init(void)
 	args.traceflags = 0;
 
 	args.dispatch = &dispatch;
+}
 
+/*
+ * Translate a single function. addr must point to the function's entry
+ * point. Does not use the translation cache.
+ */
+static void *_kmemcheck2_translate(void *addr)
+{
 	VexTranslateResult res;
-	res = LibVEX_Translate(&args);
 
-	if (res == VexTransOK) {
-		printk(KERN_DEBUG "LibVEX_Translate OK\n");
+	args.guest_bytes = addr;
+	args.guest_bytes_addr = (Addr64) addr;
 
-		/* Execute translated code */
-		((void (*)(void)) extents.base[0])();
+	while (1) {
+		res = LibVEX_Translate(&args);
+		if (res == VexTransOK)
+			break;
 
-		BUG_ON(!ran_translated_code);
-	} else if (res == VexTransAccessFail) {
-		printk(KERN_DEBUG "LibVEX_Translate AccessFail\n");
-	} else if (res == VexTransOutputFull) {
-		printk(KERN_DEBUG "LibVEX_Translate OutputFull\n");
+		if (res == VexTransOutputFull) {
+			args.host_bytes = kmalloc(PAGE_SIZE, GFP_KERNEL);
+			args.host_bytes_size = PAGE_SIZE;
+			host_bytes_used = 0;
+			continue;
+		}
+
+		BUG();
 	}
+
+	return (void *) extents.base[0];
+}
+
+/*
+ * Translate a single function. Will use the cache if possible.
+ */
+void *kmemcheck2_translate(void *addr)
+{
+	struct kmemcheck2_translation *t;
+
+	/* XXX: We should be able to optimise this by looking up the rb
+	 * node only once. (We currently do it once for lookup and once
+	 * for insertion if it's not there.) */
+	t = rb_search_translations(addr);
+	if (t) {
+		printk(KERN_DEBUG "kmemcheck2_translate: found in cache!\n");
+		goto out;
+	}
+
+	t = kmalloc(sizeof(*t), GFP_KERNEL);
+	/* XXX: Check result */BUG_ON(!t);
+
+	t->original = addr;
+	t->translated = _kmemcheck2_translate(addr);
+
+	rb_insert_translation(addr, &t->node);
+
+out:
+	return t->translated;
+}
+
+int __init kmemcheck2_init(void)
+{
+	LibVEX_Init(&failure_exit, &log_bytes, 1, false, &clo_vex_control);
+
+	kmemcheck2_translate_init();
+
+	/* Translate and execute stub */
+	void (*func)(void) = kmemcheck2_translate(&translated_code);
+	func();
+	BUG_ON(!ran_translated_code);
 
 	printk(KERN_INFO "kmemcheck2: Initialized\n");
 	return 0;
