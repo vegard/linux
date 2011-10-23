@@ -9,9 +9,7 @@
 #include <unistd.h>
 
 #define LKC_DIRECT_LINK
-#include "bitset.h"
 #include "bool.h"
-#include "cnf.h"
 #include "lkc.h"
 #include "picosat.h"
 
@@ -21,7 +19,8 @@ static struct symbol **symbol_variables;
 static unsigned int nr_prompt_variables;
 static struct property **prompt_variables;
 
-/* Total */
+/* Number of variables (not including variables introduced by the Tseitin
+ * encoding) */
 static unsigned int nr_sat_variables;
 
 static bool is_symbol_variable(unsigned int var)
@@ -48,7 +47,7 @@ static struct property *get_prompt_variable(unsigned int var)
 	return prompt_variables[var - 1 - nr_symbol_variables];
 }
 
-static char **clauses;
+static const char **clauses;
 static unsigned int max_clauses;
 static unsigned int nr_clauses;
 
@@ -370,48 +369,109 @@ static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_ex
 	assert(false);
 }
 
-static struct cnf *bool_to_cnf(struct bool_expr *e)
+static void add_clause(const char *name, unsigned int nr_literals, ...)
+{
+	assert(picosat_added_original_clauses() == nr_clauses);
+
+	if (nr_clauses == max_clauses) {
+		unsigned int new_max_clauses;
+		const char **new_clauses;
+
+		new_max_clauses = (max_clauses + 7) * 2;
+		new_clauses = realloc(clauses, new_max_clauses * sizeof(*clauses));
+		if (!new_clauses) {
+			fprintf(stderr, "error: out of memory\n");
+			exit(EXIT_FAILURE);
+		}
+
+		max_clauses = new_max_clauses;
+		clauses  = new_clauses;
+	}
+
+	clauses[nr_clauses++] = name;
+
+	va_list ap;
+	va_start(ap, nr_literals);
+
+	unsigned int i;
+	for (i = 0; i < nr_literals; ++i) {
+		int lit = va_arg(ap, int);
+		picosat_add(lit);
+	}
+
+	picosat_add(0);
+
+	va_end(ap);
+}
+
+/* Use the Tseitin encoding to convert the boolean expression to CNF. The
+ * encoding involves introducing extra variables for every internal node of
+ * the boolean expression. 
+ *
+ * This function returns the literal associated with the expression. The
+ * boolean expression is left intact and must be freed by the called (no
+ * references are taken).
+ *
+ * XXX: If a boolean expression is referenced more than once, it may
+ * introduce a new variable for every occurrence. Fix that. */
+static int _add_clauses(struct bool_expr *e, const char *name)
 {
 	switch (e->op) {
-	case CONST:
-		assert(e->nullary);
-		return cnf_new();
-
 	case VAR:
-		return cnf_new_single_positive(nr_sat_variables + 1, e->var);
+		return e->var;
 
-	case NOT:
-		assert(e->unary->op == VAR);
-		return cnf_new_single_negative(nr_sat_variables + 1, e->unary->var);
+	case NOT: {
+		int x = _add_clauses(e->unary, name);
+		return -x;
+	}
 
 	case AND: {
-		struct cnf *t1, *t2, *ret;
+		int a = _add_clauses(e->binary.a, name);
+		int b = _add_clauses(e->binary.b, name);
 
-		t1 = bool_to_cnf(e->binary.a);
-		t2 = bool_to_cnf(e->binary.b);
-		ret = cnf_and(t1, t2);
-
-		cnf_put(t1);
-		cnf_put(t2);
-		return ret;
+		int new_var = picosat_inc_max_var();
+		add_clause(name, 3, new_var, -a, -b);
+		add_clause(name, 2, -new_var, a);
+		add_clause(name, 2, -new_var, b);
+		return new_var;
 	}
 
 	case OR: {
-		struct cnf *t1, *t2, *ret;
+		int a = _add_clauses(e->binary.a, name);
+		int b = _add_clauses(e->binary.b, name);
 
-		t1 = bool_to_cnf(e->binary.a);
-		t2 = bool_to_cnf(e->binary.b);
-		ret = cnf_or(t1, t2);
-
-		cnf_put(t1);
-		cnf_put(t2);
-		return ret;
+		int new_var = picosat_inc_max_var();
+		add_clause(name, 3, -new_var, a, b);
+		add_clause(name, 2, new_var, -a);
+		add_clause(name, 2, new_var, -b);
+		return new_var;
 	}
 
 	default:
-		printf("%d\n", e->op);
+		bool_fprint(stderr, e);
 		assert(false);
 	}
+}
+
+static void add_clauses(struct bool_expr *e, const char *fmt, ...)
+{
+	if (e->op == CONST) {
+		assert(e->unary);
+		return;
+	}
+
+	va_list ap;
+	char *name;
+
+	va_start(ap, fmt);
+	vasprintf(&name, fmt, ap);
+	va_end(ap);
+
+	/* XXX: Should REALLY fix this. It introduces way too many unit
+	 * clauses. We can and should simplify before passing the clauses
+	 * to the SAT solver. */
+	int x = _add_clauses(e, name);
+	add_clause(name, 1, x);
 }
 
 static const char *get_variable_name(unsigned int var)
@@ -421,64 +481,9 @@ static const char *get_variable_name(unsigned int var)
 	if (is_prompt_variable(var))
 		return get_prompt_variable(var)->sym->name;
 
+	/* Is Tseitin-encoding variable */
 	assert(false);
 }
-
-static void add_positive(void *priv, unsigned int bit)
-{
-	picosat_add(bit);
-}
-
-static void add_negative(void *priv, unsigned int bit)
-{
-	picosat_add(-bit);
-}
-
-static void add_clause(struct cnf_clause *clause)
-{
-	if (clause->positive)
-		bitset_call_for_each_bit(clause->positive, &add_positive, NULL);
-	if (clause->negative)
-		bitset_call_for_each_bit(clause->negative, &add_negative, NULL);
-
-	picosat_add(0);
-}
-
-static void add_cnf(struct cnf *cnf, const char *fmt, ...)
-{
-	va_list ap;
-	char *name;
-	struct cnf_clause *i;
-
-	va_start(ap, fmt);
-	vasprintf(&name, fmt, ap);
-	va_end(ap);
-
-	for (i = cnf->first; i; i = i->next) {
-		assert(picosat_added_original_clauses() == nr_clauses);
-
-		if (nr_clauses == max_clauses) {
-			unsigned int new_max_clauses;
-			char **new_clauses;
-
-			new_max_clauses = (max_clauses + 7) * 2;
-			new_clauses = realloc(clauses, new_max_clauses * sizeof(*clauses));
-			if (!new_clauses) {
-				fprintf(stderr, "error: out of memory\n");
-				exit(EXIT_FAILURE);
-			}
-
-			max_clauses = new_max_clauses;
-			clauses  = new_clauses;
-		}
-
-		clauses[nr_clauses++] = name;
-
-		add_clause(i);
-	}
-}
-
-static struct cnf *kconfig_cnf;
 
 static bool build_choice_clauses(struct symbol *sym)
 {
@@ -508,17 +513,13 @@ static bool build_choice_clauses(struct symbol *sym)
 	/* If the symbol is not optional, then it must be enabled */
 	if (!sym_is_optional(sym)) {
 		struct bool_expr *t1, *t2;
-		struct cnf *cnf;
 
 		t1 = bool_var(prompt->sat_variable);
 		t2 = bool_dep(visible[0], t1);
 		bool_put(t1);
 
-		cnf = bool_to_cnf(t2);
+		add_clauses(t2, "<choice block> is mandatory");
 		bool_put(t2);
-
-		add_cnf(cnf, "<choice block> is mandatory");
-		cnf_append(kconfig_cnf, cnf);
 	}
 
 	/* If the choice block is not optional, then one of
@@ -530,7 +531,6 @@ static bool build_choice_clauses(struct symbol *sym)
 		struct bool_expr *any_visible;
 		struct bool_expr *t1;
 		struct bool_expr *dep;
-		struct cnf *cnf;
 
 		/* This is a conjunction of all the choice values */
 		block = bool_const(false);
@@ -603,11 +603,8 @@ static bool build_choice_clauses(struct symbol *sym)
 		bool_put(t1);
 		bool_put(block);
 
-		cnf = bool_to_cnf(dep);
+		add_clauses(dep, "<choice block> depends on <one of the choices>");
 		bool_put(dep);
-
-		add_cnf(cnf, "<choice block> depends on <one of the choices>");
-		cnf_append(kconfig_cnf, cnf);
 	}
 
 	for_all_choices(sym, prop) {
@@ -618,7 +615,6 @@ static bool build_choice_clauses(struct symbol *sym)
 			struct bool_expr *exclusive;
 			struct bool_expr *var;
 			struct bool_expr *dep;
-			struct cnf *cnf;
 
 			exclusive = bool_const(false);
 
@@ -644,10 +640,8 @@ static bool build_choice_clauses(struct symbol *sym)
 			bool_put(var);
 			bool_put(exclusive);
 
-			cnf = bool_to_cnf(dep);
-			add_cnf(cnf, "<choice block> can have at most one option set (%s)",
+			add_clauses(dep, "<choice block> can have at most one option set (%s)",
 				choice->name ?: "<choice>");
-			cnf_append(kconfig_cnf, cnf);
 			bool_put(dep);
 		}
 	}
@@ -660,7 +654,6 @@ static bool build_choice_clauses(struct symbol *sym)
 static bool build_tristate_clauses(struct symbol *sym)
 {
 	struct bool_expr *t1, *t2, *t3, *t4;
-	struct cnf *cnf;
 
 	t1 = bool_var(sym->sat_variable);
 	t2 = bool_var(sym->sat_variable + 1);
@@ -668,16 +661,12 @@ static bool build_tristate_clauses(struct symbol *sym)
 
 	/* Add the VAR_m -> VAR_y restriction */
 	t4 = bool_dep(t2, t1);
-	cnf = bool_to_cnf(t4);
-	add_cnf(cnf, "%s_m -> %s_y", sym->name ?: "<choice>", sym->name ?: "<choice>");
-	cnf_append(kconfig_cnf, cnf);
+	add_clauses(t4, "%s_m -> %s_y", sym->name ?: "<choice>", sym->name ?: "<choice>");
 	bool_put(t4);
 
 	/* Add the VAR_m -> MODULES restriction */
 	t4 = bool_dep(t2, t3);
-	cnf = bool_to_cnf(t4);
-	add_cnf(cnf, "%s_m -> MODULES", sym->name ?: "<choice>");
-	cnf_append(kconfig_cnf, cnf);
+	add_clauses(t4, "%s_m -> MODULES", sym->name ?: "<choice>");
 	bool_put(t4);
 
 	bool_put(t1);
@@ -693,7 +682,6 @@ static bool build_visible(struct symbol *sym)
 	struct property *prompt;
 	struct bool_expr *cond;
 	struct bool_expr *t1, *t2;
-	struct cnf *cnf;
 
 	for_all_prompts(sym, prompt) {
 		has_prompt = true;
@@ -720,11 +708,8 @@ static bool build_visible(struct symbol *sym)
 	bool_put(cond);
 	bool_put(t1);
 
-	cnf = bool_to_cnf(t2);
+	add_clauses(t2, "%s prompts", sym->name ?: "<choice>");
 	bool_put(t2);
-
-	add_cnf(cnf, "%s prompts", sym->name ?: "<choice>");
-	cnf_put(cnf);
 	return true;
 }
 
@@ -735,7 +720,6 @@ static bool build_prompt_dependency_clauses(struct symbol *sym)
 	for_all_prompts(sym, prop) {
 		struct bool_expr *e[2];
 		struct bool_expr *t1, *t2;
-		struct cnf *cnf;
 		struct gstr str;
 
 		/* XXX: Is this Correct? Is this Good? As to the first, I
@@ -764,18 +748,14 @@ static bool build_prompt_dependency_clauses(struct symbol *sym)
 		bool_put(e[0]);
 		bool_put(e[1]);
 
-		cnf = bool_to_cnf(t2);
-
 		str = str_new();
 		if (sym_is_choice_value(sym))
 			expr_gstr_print(prop->visible.expr, &str);
 		else
 			expr_gstr_print(prop->menu->dep, &str);
-		add_cnf(cnf, "%s menu depends on %s", sym->name ?: "<choice>", str_get(&str));
-		str_free(&str);
-
-		cnf_append(kconfig_cnf, cnf);
+		add_clauses(t2, "%s menu depends on %s", sym->name ?: "<choice>", str_get(&str));
 		bool_put(t2);
+		str_free(&str);
 	}
 
 	return true;
@@ -786,7 +766,6 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 	struct bool_expr *condition[2];
 	struct bool_expr *e[2];
 	struct bool_expr *t1, *t2, *t3;
-	struct cnf *cnf;
 	struct gstr str1, str2;
 
 	/* Verified: select only happens when the prompt it is defined under is _visible_ and
@@ -812,9 +791,6 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 	bool_put(e[0]);
 	bool_put(e[1]);
 
-	cnf = bool_to_cnf(t3);
-	bool_put(t3);
-
 	str1 = str_new();
 	expr_gstr_print(prop->expr, &str1);
 	str2 = str_new();
@@ -822,12 +798,11 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 		str_append(&str2, " if ");
 		expr_gstr_print(prop->visible.expr, &str2);
 	}
-	add_cnf(cnf, "%s select %s%s", sym->name ?: "<choice>",
+	add_clauses(t3, "%s select %s%s", sym->name ?: "<choice>",
 		str_get(&str1), str_get(&str2));
+	bool_put(t3);
 	str_free(&str1);
 	str_free(&str2);
-
-	cnf_append(kconfig_cnf, cnf);
 	return true;
 }
 
@@ -890,65 +865,7 @@ static bool build_clauses(void)
 	return true;
 }
 
-struct clause_to_bool_callback_data {
-	struct bool_expr *expr;
-	unsigned int except;
-};
-
-static void clause_to_bool_positive_callback(void *priv, unsigned int bit)
-{
-	struct clause_to_bool_callback_data *data;
-	struct bool_expr *t1, *t2;
-
-	data = priv;
-	if (bit == data->except)
-		return;
-
-	t1 = data->expr;
-	t2 = bool_var(bit);
-	data->expr = bool_and(t1, t2);
-	bool_put(t1);
-	bool_put(t2);
-}
-
-static void clause_to_bool_negative_callback(void *priv, unsigned int bit)
-{
-	struct clause_to_bool_callback_data *data;
-	struct bool_expr *t1, *t2, *t3;
-
-	data = priv;
-	if (bit == data->except)
-		return;
-
-	t1 = data->expr;
-	t2 = bool_var(bit);
-	t3 = bool_not(t2);
-	bool_put(t2);
-	data->expr = bool_and(t1, t3);
-	bool_put(t1);
-	bool_put(t3);
-}
-
-static struct bool_expr *clause_to_bool_except(struct cnf_clause *clause, unsigned int except)
-{
-	struct clause_to_bool_callback_data data;
-
-	data.expr = bool_const(true);
-	data.except = except;
-
-	if (clause->positive) {
-		bitset_call_for_each_bit(clause->positive,
-			&clause_to_bool_positive_callback, &data);
-	}
-
-	if (clause->negative) {
-		bitset_call_for_each_bit(clause->negative,
-			&clause_to_bool_negative_callback, &data);
-	}
-
-	return data.expr;
-}
-
+#if 0
 static bool build_default_clauses(struct symbol *sym, struct bool_expr *symbol_value[2],
 	unsigned int sat_variable, struct bool_expr *visible,
 	struct property *prop)
@@ -1112,6 +1029,7 @@ static bool build_all_default_clauses(void)
 
 	return true;
 }
+#endif
 
 static unsigned int nr_changed = 0;
 
@@ -1183,7 +1101,24 @@ int main(int argc, char *argv[])
 	}
 
 	assign_sat_variables();
+
+	/* We _will_ need more variables as we build the clauses, but
+	 * picosat_inc_max_var() takes care of it. */
 	picosat_adjust(1 + nr_sat_variables);
+
+	if (!build_clauses()) {
+		fprintf(stderr, "error: inconsistent kconfig files while "
+			"building clauses\n");
+		exit(EXIT_FAILURE);
+	}
+
+#if 0
+	if (!build_all_default_clauses()) {
+		fprintf(stderr, "error: inconsistent kconfig files while "
+			"building default clauses\n");
+		exit(EXIT_FAILURE);
+	}
+#endif
 
 	{
 		/* Modules are preferred over built-ins; tell that to the
@@ -1202,20 +1137,6 @@ int main(int argc, char *argv[])
 
 	picosat_set_default_phase_lit(modules_sym->sat_variable, 1);
 
-	kconfig_cnf = bool_to_cnf(bool_const(true));
-
-	if (!build_clauses()) {
-		fprintf(stderr, "error: inconsistent kconfig files while "
-			"building clauses\n");
-		exit(EXIT_FAILURE);
-	}
-
-	if (!build_all_default_clauses()) {
-		fprintf(stderr, "error: inconsistent kconfig files while "
-			"building default clauses\n");
-		exit(EXIT_FAILURE);
-	}
-
 	{
 		unsigned int i;
 		struct symbol *sym;
@@ -1228,10 +1149,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	cnf_put(kconfig_cnf);
-
 	assert(nr_bool_created == nr_bool_destroyed);
-	assert(nr_cnf_created == nr_cnf_destroyed);
 
 	printf("%u clauses\n", nr_clauses);
 
@@ -1244,7 +1162,8 @@ int main(int argc, char *argv[])
 		if (sat != PICOSAT_SATISFIABLE) {
 			unsigned int i;
 
-			fprintf(stderr, "error: inconsistent kconfig files\n");
+			fprintf(stderr, "error: inconsistent kconfig files "
+				"(no valid configurations possible)\n");
 
 			for (i = 0; i < nr_clauses; ++i) {
 				if (picosat_coreclause(i))
