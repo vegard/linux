@@ -88,7 +88,7 @@ As can easily be seen,
 
 	(A = B)_m ≡ 0.
 
-Observing that (A_B)_y is true if and only if A_y and B_y are equal and 
+Observing that (A = B)_y is true if and only if A_y and B_y are equal and
 A_m and B_m are equal, we could use the formula:
 
 	(A = B)_y ≡ (A_y ↔ B_y) ∧ (A_m ↔ B_m)
