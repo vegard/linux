@@ -13,11 +13,20 @@
 #include "lkc.h"
 #include "picosat.h"
 
+#if 0
+#define DEBUG(fmt, ...) printf(fmt, ## __VA_ARGS__)
+#else
+#define DEBUG(fmt, ...)
+#endif
+
 static unsigned int nr_symbol_variables;
 static struct symbol **symbol_variables;
 
 static unsigned int nr_prompt_variables;
 static struct property **prompt_variables;
+
+static unsigned int nr_default_variables;
+static struct property **default_variables;
 
 /* Number of variables (not including variables introduced by the Tseitin
  * encoding) */
@@ -58,9 +67,11 @@ static void assign_sat_variables(void)
 	unsigned int variable = 1;
 	unsigned int symbol_variable = 0;
 	unsigned int prompt_variable = 0;
+	unsigned int default_variable = 0;
 
 	assert(nr_symbol_variables == 0);
 	assert(nr_prompt_variables == 0);
+	assert(nr_default_variables == 0);
 
 	/* Just count the number of variables we'll need */
 	for_all_symbols(i, sym) {
@@ -79,20 +90,26 @@ static void assign_sat_variables(void)
 
 		for_all_prompts(sym, prop)
 			nr_prompt_variables += 1;
+
+		for_all_defaults(sym, prop)
+			nr_default_variables += 1;
 	}
 
-	nr_sat_variables = nr_symbol_variables + nr_prompt_variables;
+	nr_sat_variables = nr_symbol_variables + nr_prompt_variables + nr_default_variables;
 	symbol_variables = malloc(nr_symbol_variables * sizeof(*symbol_variables));
 	prompt_variables = malloc(nr_prompt_variables * sizeof(*prompt_variables));
+	default_variables = malloc(nr_default_variables * sizeof(*default_variables));
 
 	/* Assign variables to each symbol */
 	for_all_symbols(i, sym) {
 		switch (sym->type) {
 		case S_BOOLEAN:
+			DEBUG("var %d = bool symbol %s\n", variable, sym->name ?: "<unknown>");
 			sym->sat_variable = variable++;
 			symbol_variables[symbol_variable++] = sym;
 			break;
 		case S_TRISTATE:
+			DEBUG("var %d = tristate symbol %s\n", variable, sym->name ?: "<unknown>");
 			sym->sat_variable = variable;
 			variable += 2;
 			symbol_variables[symbol_variable++] = sym;
@@ -110,6 +127,7 @@ static void assign_sat_variables(void)
 		struct property *prop;
 
 		for_all_prompts(sym, prop) {
+			DEBUG("var %d = prompt for %s\n", variable, sym->name ?: "<unknown>");
 			prop->sat_variable = variable++;
 			prompt_variables[prompt_variable++] = prop;
 		}
@@ -117,11 +135,24 @@ static void assign_sat_variables(void)
 
 	assert(prompt_variable == nr_prompt_variables);
 
-	assert(symbol_variable + prompt_variable == nr_sat_variables);
+	/* Assign variables to each default */
+	for_all_symbols(i, sym) {
+		struct property *prop;
+
+		for_all_defaults(sym, prop) {
+			DEBUG("var %d = default for %s\n", variable, sym->name ?: "<unknown>");
+			prop->sat_variable = variable++;
+			default_variables[default_variable++] = prop;
+		}
+	}
+
+	assert(default_variable = nr_default_variables);
+
+	assert(symbol_variable + prompt_variable + default_variable == nr_sat_variables);
 	assert(variable == nr_sat_variables + 1);
 
-	printf("%u variables (%u symbols, %u prompts)\n",
-		nr_sat_variables, nr_symbol_variables, nr_prompt_variables);
+	printf("%u variables (%u symbols, %u prompts, %u defaults)\n",
+		nr_sat_variables, nr_symbol_variables, nr_prompt_variables, nr_default_variables);
 }
 
 static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_expr *result[2]);
@@ -331,6 +362,12 @@ static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_ex
 		 * should get rid of the "depends on m" special case
 		 * altogether and rewrite those as "depends on SELF=m". */
 		if (e->left.sym == &symbol_mod) {
+			/* XXX: This will fail:
+			 * 
+			 * config NF_CONNTRACK_SECMARK
+			 * bool "Connection tracking"
+			 * default m
+			 */
 			assert(lhs->type == S_TRISTATE);
 
 			struct bool_expr *t1, *t2;
@@ -357,7 +394,10 @@ static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_ex
 		}
 
 		result[0] = bool_var(e->left.sym->sat_variable);
-		result[1] = bool_const(false);
+		/* XXX: hould this be true or false? It used to be false, but
+		 * in the case of "select <symbol>" we want these result[]
+		 * variables to be the consequences of selecting the symbol. */
+		result[1] = bool_const(true);
 		return;
 	case E_RANGE:
 		break;
@@ -393,13 +433,19 @@ static void add_clause(const char *name, unsigned int nr_literals, ...)
 	va_list ap;
 	va_start(ap, nr_literals);
 
+	DEBUG("%s: ", name);
+
 	unsigned int i;
 	for (i = 0; i < nr_literals; ++i) {
 		int lit = va_arg(ap, int);
 		picosat_add(lit);
+
+		DEBUG("%d ", lit);
 	}
 
 	picosat_add(0);
+
+	DEBUG("\n");
 
 	va_end(ap);
 }
@@ -489,33 +535,21 @@ static bool build_choice_clauses(struct symbol *sym)
 {
 	struct property *prop;
 	struct property *prompt;
-	struct bool_expr *visible[2];
+	struct bool_expr *visible;
 
 	assert(sym->type == S_BOOLEAN || sym->type == S_TRISTATE);
-
-	{
-		unsigned int nr_prompts = 0;
-		for_all_prompts(sym, prompt)
-			++nr_prompts;
-		assert(nr_prompts < 2);
-	}
 
 	prompt = sym_get_prompt(sym);
 	assert(prompt);
 
-	if (prompt->visible.expr) {
-		expr_to_bool_expr(sym, prompt->visible.expr, visible);
-	} else {
-		visible[0] = bool_const(true);
-		visible[1] = bool_const(false);
-	}
+	visible = bool_var(prompt->sat_variable);
 
 	/* If the symbol is not optional, then it must be enabled */
 	if (!sym_is_optional(sym)) {
 		struct bool_expr *t1, *t2;
 
-		t1 = bool_var(prompt->sat_variable);
-		t2 = bool_dep(visible[0], t1);
+		t1 = bool_var(sym->sat_variable);
+		t2 = bool_dep(visible, t1);
 		bool_put(t1);
 
 		add_clauses(t2, "<choice block> is mandatory");
@@ -524,9 +558,7 @@ static bool build_choice_clauses(struct symbol *sym)
 
 	/* If the choice block is not optional, then one of
 	 * options must be set. */
-	/* XXX: Exception: If none of the choices are visible, then
-	 * no option must be set. */
-	if (!(sym->flags & SYMBOL_OPTIONAL)) {
+	if (!sym_is_optional(sym)) {
 		struct bool_expr *block;
 		struct bool_expr *any_visible;
 		struct bool_expr *t1;
@@ -563,40 +595,18 @@ static bool build_choice_clauses(struct symbol *sym)
 				struct property *prompt;
 
 				for_all_prompts(choice, prompt) {
-					struct bool_expr *visible[2];
+					struct bool_expr *t;
 					struct bool_expr *old_any_visible;
 
-					/* XXX: Also use prompt->expr? */
-					if (prompt->visible.expr) {
-						struct bool_expr *t1, *t2, *t3;
-
-						expr_to_bool_expr(choice, prompt->visible.expr, visible);
-
-						/* XXX: Replace in visible[1] too? */
-						/* XXX: Replace sat_variable + 1 too? */
-						t1 = bool_var(sym->sat_variable);
-						t2 = bool_const(true);
-
-						/* Assume that choice block is visible when we decide
-						 * whether or not a choice is visible. */
-						visible[0] = bool_replace(t3 = visible[0], t1, t2);
-						bool_put(t1);
-						bool_put(t2);
-						bool_put(t3);
-					} else {
-						visible[0] = bool_const(true);
-						visible[1] = bool_const(false);
-					}
-
-					any_visible = bool_or(old_any_visible = any_visible, visible[0]);
+					t = bool_var(prompt->sat_variable);
+					any_visible = bool_or(old_any_visible = any_visible, t);
 					bool_put(old_any_visible);
-					bool_put(visible[0]);
-					bool_put(visible[1]);
+					bool_put(t);
 				}
 			}
 		}
 
-		t1 = bool_and(visible[0], any_visible);
+		t1 = bool_and(visible, any_visible);
 		bool_put(any_visible);
 
 		dep = bool_dep(t1, block);
@@ -607,47 +617,64 @@ static bool build_choice_clauses(struct symbol *sym)
 		bool_put(dep);
 	}
 
+	/* The choices are mutually exclusive */
 	for_all_choices(sym, prop) {
-		struct expr *expr, *expr2;
-		struct symbol *choice, *choice2;
+		struct expr *expr;
+		struct symbol *choice;
 
 		expr_list_for_each_sym(prop->expr, expr, choice) {
-			struct bool_expr *exclusive;
-			struct bool_expr *var;
-			struct bool_expr *dep;
+			struct bool_expr *t1, *t2;
+			struct expr *expr2;
+			struct symbol *choice2;
 
-			exclusive = bool_const(false);
+			t1 = bool_var(choice->sat_variable);
+			t2 = bool_not(t1);
+			bool_put(t1);
 
-			/* If the choice block =y, then only one option value
-			 * may be selected at the same time. */
 			expr_list_for_each_sym(prop->expr, expr2, choice2) {
-				struct bool_expr *t1, *t2, *t3;
+				struct bool_expr *t3, *t4, *t5;
 
-				if (choice2 == choice)
+				/* Don't add the same clause twice */
+				if (expr <= expr2)
 					continue;
 
-				t1 = bool_var(choice2->sat_variable);
-				t2 = bool_not(t1);
-				bool_put(t1);
-				t3 = bool_or(exclusive, t2);
-				bool_put(exclusive);
-				bool_put(t2);
-				exclusive = t3;
+				t3 = bool_var(choice2->sat_variable);
+				t4 = bool_not(t3);
+				bool_put(t3);
+
+				t5 = bool_or(t2, t4);
+				bool_put(t4);
+
+				add_clauses(t5, "%s and %s are mutual exclusive",
+					choice->name ?: "<choice>",
+					choice2->name ?: "<choice>");
+				bool_put(t5);
 			}
 
-			var = bool_var(choice->sat_variable);
-			dep = bool_dep(var, exclusive);
-			bool_put(var);
-			bool_put(exclusive);
-
-			add_clauses(dep, "<choice block> can have at most one option set (%s)",
-				choice->name ?: "<choice>");
-			bool_put(dep);
+			bool_put(t2);
 		}
 	}
 
-	bool_put(visible[0]);
-	bool_put(visible[1]);
+	/* Build the default clauses. This is similar to how we build default
+	 * clauses for regular symbols, but still different. For one, the
+	 * default directive doesn't specify the default value of the current
+	 * symbol, but of the choice symbol. For another, choice symbols have
+	 * only one menu. */
+	for_all_defaults(sym, prop) {
+		struct bool_expr *e[2];
+
+		if (prop->visible.expr) {
+			expr_to_bool_expr(NULL, prop->visible.expr, e);
+		} else {
+			e[0] = bool_const(true);
+			e[1] = bool_const(false);
+		}
+
+		bool_put(e[0]);
+		bool_put(e[1]);
+	}
+
+	bool_put(visible);
 	return true;
 }
 
@@ -676,87 +703,36 @@ static bool build_tristate_clauses(struct symbol *sym)
 	return true;
 }
 
-static bool build_visible(struct symbol *sym)
+static bool build_prompt_visibility_clauses(struct property *prop)
 {
-	bool has_prompt = false;
-	struct property *prompt;
-	struct bool_expr *cond;
+	struct bool_expr *e[2];
 	struct bool_expr *t1, *t2;
+	struct gstr str;
 
-	for_all_prompts(sym, prompt) {
-		has_prompt = true;
-		break;
+	/* visible.expr is a conjunction of the menu's dependencies
+	 * (parent menus' "depends on", this menu' "depends on", and the
+	 * "if" part of the prompt). Which is exactly what we need. */
+	if (prop->visible.expr) {
+		expr_to_bool_expr(prop->sym, prop->visible.expr, e);
+	} else {
+		e[0] = bool_const(true);
+		e[1] = bool_const(false);
 	}
 
-	/* Don't actually do anything if there aren't any prompts */
-	if (!has_prompt)
-		return true;
-
-	cond = bool_const(false);
-	for_all_prompts(sym, prompt) {
-		struct bool_expr *old_cond;
-		struct bool_expr *t1;
-
-		t1 = bool_var(prompt->sat_variable);
-		cond = bool_or(old_cond = cond, t1);
-		bool_put(old_cond);
-		bool_put(t1);
-	}
-
-	t1 = bool_var(sym->sat_variable);
-	t2 = bool_dep(t1, cond);
-	bool_put(cond);
+	/* Prompts are visible if and only if
+	 *  - the menu is visible ("depends on", etc.)
+	 *  - the prompt's dependencies are satisfied (the "if" part) */
+	t1 = bool_var(prop->sat_variable);
+	t2 = bool_eq(t1, e[0]);
 	bool_put(t1);
+	bool_put(e[0]);
+	bool_put(e[1]);
 
-	add_clauses(t2, "%s prompts", sym->name ?: "<choice>");
+	str = str_new();
+	expr_gstr_print(prop->visible.expr, &str);
+	add_clauses(t2, "\"%s\" prompt depends on %s", prop->text, str_get(&str));
 	bool_put(t2);
-	return true;
-}
-
-static bool build_prompt_dependency_clauses(struct symbol *sym)
-{
-	struct property *prop;
-
-	for_all_prompts(sym, prop) {
-		struct bool_expr *e[2];
-		struct bool_expr *t1, *t2;
-		struct gstr str;
-
-		/* XXX: Is this Correct? Is this Good? As to the first, I
-		 * am uncertain of whether we should in build_choice_clauses
-		 * also use the prompt's "conditional part". As to the
-		 * second, whether that would invalidate this effort here. */
-		if (sym_is_choice_value(sym)) {
-			if (prop->visible.expr) {
-				expr_to_bool_expr(sym, prop->visible.expr, e);
-			} else {
-				e[0] = bool_const(true);
-				e[1] = bool_const(false);
-			}
-		} else {
-			if (prop->menu->dep) {
-				expr_to_bool_expr(sym, prop->menu->dep, e);
-			} else {
-				e[0] = bool_const(true);
-				e[1] = bool_const(false);
-			}
-		}
-
-		t1 = bool_var(prop->sat_variable);
-		t2 = bool_dep(t1, e[0]);
-		bool_put(t1);
-		bool_put(e[0]);
-		bool_put(e[1]);
-
-		str = str_new();
-		if (sym_is_choice_value(sym))
-			expr_gstr_print(prop->visible.expr, &str);
-		else
-			expr_gstr_print(prop->menu->dep, &str);
-		add_clauses(t2, "%s menu depends on %s", sym->name ?: "<choice>", str_get(&str));
-		bool_put(t2);
-		str_free(&str);
-	}
+	str_free(&str);
 
 	return true;
 }
@@ -765,11 +741,8 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 {
 	struct bool_expr *condition[2];
 	struct bool_expr *e[2];
-	struct bool_expr *t1, *t2, *t3;
+	struct bool_expr *t1, *t2, *t3, *t4;
 	struct gstr str1, str2;
-
-	/* Verified: select only happens when the prompt it is defined under is _visible_ and
-	 * the select dependencies are satisfied. */
 
 	if (prop->visible.expr) {
 		expr_to_bool_expr(sym, prop->visible.expr, condition);
@@ -785,11 +758,14 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 	bool_put(t1);
 	bool_put(condition[0]);
 	bool_put(condition[1]);
-	/* XXX: bool_and(e[0], e[1]) */
-	t3 = bool_dep(t2, e[0]);
-	bool_put(t2);
+
+	t3 = bool_and(e[0], e[1]);
 	bool_put(e[0]);
 	bool_put(e[1]);
+
+	t4 = bool_dep(t2, t3);
+	bool_put(t2);
+	bool_put(t3);
 
 	str1 = str_new();
 	expr_gstr_print(prop->expr, &str1);
@@ -798,9 +774,9 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 		str_append(&str2, " if ");
 		expr_gstr_print(prop->visible.expr, &str2);
 	}
-	add_clauses(t3, "%s select %s%s", sym->name ?: "<choice>",
+	add_clauses(t4, "%s select %s%s", sym->name ?: "<choice>",
 		str_get(&str1), str_get(&str2));
-	bool_put(t3);
+	bool_put(t4);
 	str_free(&str1);
 	str_free(&str2);
 	return true;
@@ -808,31 +784,120 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 
 static bool build_sym_select_clauses(struct symbol *sym)
 {
-	struct property *prompt;
-	unsigned int nr_prompts;
+	struct property *prop;
 
-	nr_prompts = 0;
-	for_all_prompts(sym, prompt) {
-		struct property *prop;
+	for_all_properties(sym, prop, P_SELECT)
+		build_select_clauses(sym, prop);
 
-		++nr_prompts;
+	return true;
+}
 
-		/* Find all the selects belonging to this prompt */
-		for_all_properties(sym, prop, P_SELECT) {
-			if (prop->menu != prompt->menu)
-				continue;
+static bool build_default_clauses(struct symbol *sym)
+{
+	struct bool_expr *sym_expr[2];
+	struct bool_expr *cond;
+	struct property *prop;
 
-			build_select_clauses(sym, prop);
+	symbol_to_bool_expr(sym, sym_expr);
+
+	cond = bool_const(false);
+	for_all_prompts(sym, prop) {
+		struct bool_expr *t;
+		struct bool_expr *old_cond;
+
+		t = bool_var(prop->sat_variable);
+		cond = bool_or(old_cond = cond, t);
+		bool_put(old_cond);
+		bool_put(t);
+	}
+
+	{
+		struct bool_expr *old_cond;
+
+		cond = bool_not(old_cond = cond);
+		bool_put(old_cond);
+	}
+
+	for_all_defaults(sym, prop) {
+		struct bool_expr *e[2];
+		struct bool_expr *t1, *t2, *t3, *t4, *t5, *t6, *t7, *t8, *t9;
+		struct bool_expr *old_cond;
+		struct gstr str1, str2;
+
+		/* XXX: This should be the "if" part of the expression. However,
+		 * as it turns out, it is actually a conjunction of the menu's
+		 * dependencies AND the "if" part. (Note, however, the prompt's
+		 * dependencies are not included.) */
+		if (prop->visible.expr) {
+			expr_to_bool_expr(sym, prop->visible.expr, e);
+		} else {
+			e[0] = bool_const(true);
+			e[1] = bool_const(false);
 		}
+
+		t1 = bool_and(cond, e[0]);
+		bool_put(e[0]);
+		bool_put(e[1]);
+
+		t2 = bool_var(prop->sat_variable);
+		t3 = bool_dep(t1, t2);
+		bool_put(t1);
+
+		t4 = bool_not(t2);
+
+		cond = bool_and(old_cond = cond, t4);
+		bool_put(old_cond);
+		bool_put(t4);
+
+		/* We pass NULL here, because we don't want "default m" to be
+		 * interpreted as FOO = (FOO = m) when we have config FOO
+		 * default m. */
+		expr_to_bool_expr(NULL, prop->expr, e);
+
+		/* XXX: We may get trouble with MODULES=n and "default m" */
+		t5 = bool_eq(sym_expr[0], e[0]);
+		t6 = bool_eq(sym_expr[1], e[1]);
+		bool_put(e[0]);
+		bool_put(e[1]);
+		t7 = bool_and(t5, t6);
+		bool_put(t5);
+		bool_put(t6);
+
+		t8 = bool_dep(t2, t7);
+		bool_put(t2);
+		bool_put(t7);
+
+		t9 = bool_and(t3, t8);
+		bool_put(t3);
+		bool_put(t8);
+
+		str1 = str_new();
+		expr_gstr_print(prop->expr, &str1);
+		str2 = str_new();
+		expr_gstr_print(prop->visible.expr, &str2);
+		add_clauses(t9, "%s default %s if %s", sym->name, str_get(&str1), str_get(&str2));
+		bool_put(t9);
+		str_free(&str1);
+		str_free(&str2);
 	}
 
-	/* If there are no prompts, then we always perform the select */
-	if (nr_prompts == 0) {
-		struct property *prop;
+#if 0 /* XXX: We can't do it, because we need to allow for selects... */
+	/* If no default matched, force the symbol value to 'n'. */
+	{
+		struct bool_expr *t1, *t2;
 
-		for_all_properties(sym, prop, P_SELECT)
-			build_select_clauses(sym, prop);
+		t1 = bool_not(sym_expr[0]);
+		t2 = bool_dep(cond, t1);
+		bool_put(t1);
+
+		add_clauses(t2, "%s (implicit) default n", sym->name);
+		bool_put(t2);
 	}
+#endif
+
+	bool_put(sym_expr[0]);
+	bool_put(sym_expr[1]);
+	bool_put(cond);
 
 	return true;
 }
@@ -843,7 +908,7 @@ static bool build_clauses(void)
 	struct symbol *sym;
 
 	for_all_symbols(i, sym) {
-		if (sym->flags & SYMBOL_CHOICE) {
+		if (sym_is_choice(sym)) {
 			if (!build_choice_clauses(sym))
 				return false;
 		}
@@ -856,8 +921,19 @@ static bool build_clauses(void)
 				return false;
 		}
 
-		if (!build_prompt_dependency_clauses(sym))
-			return false;
+		struct property *prop;
+
+		/* Prompt visibility dependencies */
+		for_all_prompts(sym, prop) {
+			if (!build_prompt_visibility_clauses(prop))
+				return false;
+		}
+
+		if (!sym_is_choice(sym)) {
+			if (!build_default_clauses(sym))
+				return false;
+		}
+
 		if (!build_sym_select_clauses(sym))
 			return false;
 	}
@@ -1137,6 +1213,7 @@ int main(int argc, char *argv[])
 
 	picosat_set_default_phase_lit(modules_sym->sat_variable, 1);
 
+#if 0
 	{
 		unsigned int i;
 		struct symbol *sym;
@@ -1148,6 +1225,7 @@ int main(int argc, char *argv[])
 				return false;
 		}
 	}
+#endif
 
 	assert(nr_bool_created == nr_bool_destroyed);
 
