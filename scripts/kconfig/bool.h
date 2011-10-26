@@ -192,9 +192,6 @@ static struct bool_expr *bool_not(struct bool_expr *expr)
 
 static struct bool_expr *bool_and(struct bool_expr *a, struct bool_expr *b)
 {
-	if (a->op == CONST && b->op == CONST)
-		return bool_const(a->nullary && b->nullary);
-
 	if (a->op == CONST)
 		return bool_get(a->nullary ? b : a);
 	if (b->op == CONST)
@@ -208,9 +205,6 @@ static struct bool_expr *bool_and(struct bool_expr *a, struct bool_expr *b)
 
 static struct bool_expr *bool_or(struct bool_expr *a, struct bool_expr *b)
 {
-	if (a->op == CONST && b->op == CONST)
-		return bool_const(a->nullary || b->nullary);
-
 	if (a->op == CONST)
 		return bool_get(a->nullary ? a : b);
 	if (b->op == CONST)
