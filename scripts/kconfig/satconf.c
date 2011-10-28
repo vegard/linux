@@ -56,6 +56,26 @@ static struct property *get_prompt_variable(unsigned int var)
 	return prompt_variables[var - 1 - nr_symbol_variables];
 }
 
+static unsigned int sym_y(struct symbol *sym)
+{
+	assert(sym->type == S_BOOLEAN || sym->type == S_TRISTATE);
+	return sym->sat_variable + 0;
+}
+
+static unsigned int sym_m(struct symbol *sym)
+{
+	assert(sym->type == S_TRISTATE);
+	return sym->sat_variable + 1;
+}
+
+/* Returns the variable indicating whether the symbol was forced to a specific
+ * value by the user. */
+static unsigned int sym_assumed(struct symbol *sym)
+{
+	assert(sym->type == S_BOOLEAN || sym->type == S_TRISTATE);
+	return sym->sat_variable + (sym->type == S_TRISTATE) + 1;
+}
+
 static const char **clauses;
 static unsigned int max_clauses;
 static unsigned int nr_clauses;
@@ -79,10 +99,10 @@ static void assign_sat_variables(void)
 
 		switch (sym->type) {
 		case S_BOOLEAN:
-			nr_symbol_variables += 1;
+			nr_symbol_variables += 2;
 			break;
 		case S_TRISTATE:
-			nr_symbol_variables += 2;
+			nr_symbol_variables += 3;
 			break;
 		default:
 			break;
@@ -105,13 +125,16 @@ static void assign_sat_variables(void)
 		switch (sym->type) {
 		case S_BOOLEAN:
 			DEBUG("var %d = bool symbol %s\n", variable, sym->name ?: "<unknown>");
-			sym->sat_variable = variable++;
+			sym->sat_variable = variable;
+			variable += 2;
+			symbol_variables[symbol_variable++] = sym;
 			symbol_variables[symbol_variable++] = sym;
 			break;
 		case S_TRISTATE:
 			DEBUG("var %d = tristate symbol %s\n", variable, sym->name ?: "<unknown>");
 			sym->sat_variable = variable;
-			variable += 2;
+			variable += 3;
+			symbol_variables[symbol_variable++] = sym;
 			symbol_variables[symbol_variable++] = sym;
 			symbol_variables[symbol_variable++] = sym;
 			break;
@@ -660,8 +683,24 @@ static bool build_choice_clauses(struct symbol *sym)
 	 * default directive doesn't specify the default value of the current
 	 * symbol, but of the choice symbol. For another, choice symbols have
 	 * only one menu. */
+	struct bool_expr *cond;
+
+	{
+		struct bool_expr *t1;
+
+		/* XXX: Choice block variables can _never_ be assumed since
+		 * they are anonymous... Yikes, I think we need to do something
+		 * like (any of the choices were forced). */
+		t1 = bool_var(sym_assumed(sym));
+		cond = bool_not(t1);
+		bool_put(t1);
+	}
+
 	for_all_defaults(sym, prop) {
 		struct bool_expr *e[2];
+		struct bool_expr *t1, *t2, *t3, *t4, *t5, *t6, *t7;
+		struct bool_expr *old_cond;
+		struct gstr str1, str2;
 
 		if (prop->visible.expr) {
 			expr_to_bool_expr(NULL, prop->visible.expr, e);
@@ -670,10 +709,45 @@ static bool build_choice_clauses(struct symbol *sym)
 			e[1] = bool_const(false);
 		}
 
+		t1 = bool_and(cond, e[0]);
 		bool_put(e[0]);
 		bool_put(e[1]);
+
+		t2 = bool_var(prop->sat_variable);
+		t3 = bool_dep(t1, t2);
+		bool_put(t1);
+
+		t4 = bool_not(t2);
+		cond = bool_and(old_cond = cond, t4);
+		bool_put(old_cond);
+		bool_put(t4);
+
+		/* XXX: We want e[1] to be true if prop->expr a bool-type symbol */
+		expr_to_bool_expr(sym, prop->expr, e);
+
+		t5 = bool_and(e[0], e[1]);
+		bool_put(e[0]);
+		bool_put(e[1]);
+
+		t6 = bool_dep(t2, t5);
+		bool_put(t2);
+		bool_put(t5);
+
+		t7 = bool_and(t3, t6);
+		bool_put(t3);
+		bool_put(t6);
+
+		str1 = str_new();
+		expr_gstr_print(prop->expr, &str1);
+		str2 = str_new();
+		expr_gstr_print(prop->visible.expr, &str2);
+		add_clauses(t7, "<choice> default %s if %s", str_get(&str1), str_get(&str2));
+		bool_put(t7);
+		str_free(&str1);
+		str_free(&str2);
 	}
 
+	bool_put(cond);
 	bool_put(visible);
 	return true;
 }
@@ -1257,26 +1331,35 @@ int main(int argc, char *argv[])
 		unsigned int i;
 		struct symbol *sym;
 		for_all_symbols(i, sym) {
-			if (!(sym->flags & (SYMBOL_DEF << S_DEF_SAT)))
-				continue;
 			if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
 				continue;
-			if (sym->flags & SYMBOL_CHOICE)
-				continue;
 
-			switch (sym->curr.tri) {
-			case no:
-				picosat_assume(-sym->sat_variable);
-				break;
-			case yes:
-				picosat_assume(sym->sat_variable);
-				break;
-			case mod:
-				assert(sym->type == S_TRISTATE);
-				picosat_assume(sym->sat_variable);
-				picosat_assume(sym->sat_variable + 1);
-				break;
+			bool assume = true;
+
+			if (!(sym->flags & (SYMBOL_DEF << S_DEF_SAT))) {
+				assume = false;
+			} else if (sym->flags & SYMBOL_CHOICE) {
+				assume = false;
+			} else {
+				switch (sym->curr.tri) {
+				case no:
+					picosat_assume(-sym_y(sym));
+					break;
+				case yes:
+					picosat_assume(sym_y(sym));
+					break;
+				case mod:
+					assert(sym->type == S_TRISTATE);
+					picosat_assume(sym_y(sym));
+					picosat_assume(sym_m(sym));
+					break;
+				}
 			}
+
+			if (assume)
+				picosat_assume(sym_assumed(sym));
+			else
+				picosat_assume(-sym_assumed(sym));
 		}
 	}
 
@@ -1303,12 +1386,12 @@ int main(int argc, char *argv[])
 				continue;
 
 			{
-				int y = picosat_deref(sym->sat_variable);
+				int y = picosat_deref(sym_y(sym));
 				assert(y != 0);
 
 				if (y == 1) {
 					if (sym->type == S_TRISTATE) {
-						int m = picosat_deref(sym->sat_variable + 1);
+						int m = picosat_deref(sym_m(sym));
 						assert(m != 0);
 
 						if (m == 1)
@@ -1320,7 +1403,7 @@ int main(int argc, char *argv[])
 					}
 				} else if (y == -1) {
 					if (sym->type == S_TRISTATE) {
-						int m = picosat_deref(sym->sat_variable + 1);
+						int m = picosat_deref(sym_m(sym));
 						assert(m == -1);
 					}
 
@@ -1355,12 +1438,12 @@ int main(int argc, char *argv[])
 				continue;
 
 			{
-				int y = picosat_deref(sym->sat_variable);
+				int y = picosat_deref(sym_y(sym));
 				assert(y != 0);
 
 				if (y == 1) {
 					if (sym->type == S_TRISTATE) {
-						int m = picosat_deref(sym->sat_variable + 1);
+						int m = picosat_deref(sym_m(sym));
 						assert(m != 0);
 
 						if (m == 1)
@@ -1372,7 +1455,7 @@ int main(int argc, char *argv[])
 					}
 				} else if (y == -1) {
 					if (sym->type == S_TRISTATE) {
-						int m = picosat_deref(sym->sat_variable + 1);
+						int m = picosat_deref(sym_m(sym));
 						assert(m == -1);
 					}
 
