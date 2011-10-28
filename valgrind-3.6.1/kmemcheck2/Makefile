@@ -1,1 +1,1 @@
-obj-y += kmemcheck2.o
+obj-y += kmemcheck2.o dispatch-amd64-linux.o

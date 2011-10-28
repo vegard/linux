@@ -7,6 +7,7 @@
 #include <linux/slab.h>
 
 #include <libvex.h>
+#include <libvex_guest_amd64.h>
 
 __attribute__ ((noreturn))
 static void failure_exit(void)
@@ -68,13 +69,6 @@ static void translated_code(void)
 	printk(KERN_DEBUG "kmemcheck2: translated_code\n");
 	ran_translated_code = true;
 }
-
-static void dispatch(void)
-{
-	/* Just return */
-}
-
-
 
 static IRSB *kmemcheck2_instrument(void *data, IRSB *sb_in,
 	VexGuestLayout *layout, VexGuestExtents *vge,
@@ -170,6 +164,8 @@ static VexTranslateArgs args;
 static VexGuestExtents extents;
 static Int host_bytes_used;
 
+extern void kmemcheck2_dispatch(void);
+
 static void kmemcheck2_translate_init(void)
 {
 	args.arch_guest = KMEMCHECK2_VEX_ARCH;
@@ -206,7 +202,7 @@ static void kmemcheck2_translate_init(void)
 
 	args.traceflags = 0;
 
-	args.dispatch = &dispatch;
+	args.dispatch = &kmemcheck2_dispatch;
 }
 
 /*
@@ -220,22 +216,27 @@ static void *_kmemcheck2_translate(void *addr)
 	args.guest_bytes = addr;
 	args.guest_bytes_addr = (Addr64) addr;
 
+	unsigned int size = 256;
+
 	while (1) {
+		args.host_bytes = kmalloc(size, GFP_KERNEL);
+		args.host_bytes_size = size;
+		host_bytes_used = 0;
+
 		res = LibVEX_Translate(&args);
 		if (res == VexTransOK)
 			break;
 
 		if (res == VexTransOutputFull) {
-			args.host_bytes = kmalloc(PAGE_SIZE, GFP_KERNEL);
-			args.host_bytes_size = PAGE_SIZE;
-			host_bytes_used = 0;
+			kfree(args.host_bytes);
+			size = size * 2;
 			continue;
 		}
 
 		BUG();
 	}
 
-	return (void *) extents.base[0];
+	return args.host_bytes;
 }
 
 /*
@@ -264,16 +265,36 @@ out:
 	return t->translated;
 }
 
+void *kmemcheck2_schedule(void *addr)
+{
+	printk(KERN_DEBUG "kmemcheck2_schedule\n");
+	return kmemcheck2_translate(addr);
+}
+
 int __init kmemcheck2_init(void)
 {
 	LibVEX_Init(&failure_exit, &log_bytes, 1, false, &clo_vex_control);
 
 	kmemcheck2_translate_init();
 
+#if 0
 	/* Translate and execute stub */
 	void (*func)(void) = kmemcheck2_translate(&translated_code);
 	func();
 	BUG_ON(!ran_translated_code);
+#endif
+
+#ifdef CONFIG_X86_64
+	VexGuestAMD64State state;
+
+	LibVEX_GuestAMD64_initialise(&state);
+	state.guest_RSP = (unsigned long) kmalloc(PAGE_SIZE, GFP_KERNEL) + PAGE_SIZE;
+	state.guest_RIP = (unsigned long) &translated_code;
+
+	void (*func)(VexGuestAMD64State *state) = kmemcheck2_translate(&translated_code);
+	/* XXX: Make func executable */
+	func(&state);
+#endif
 
 	printk(KERN_INFO "kmemcheck2: Initialized\n");
 	return 0;
