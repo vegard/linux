@@ -78,7 +78,6 @@ static unsigned int sym_assumed(struct symbol *sym)
 
 static const char **clauses;
 static unsigned int max_clauses;
-static unsigned int nr_clauses;
 
 static void assign_sat_variables(void)
 {
@@ -434,25 +433,6 @@ static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_ex
 
 static void add_clause(const char *name, unsigned int nr_literals, ...)
 {
-	assert(picosat_added_original_clauses() == nr_clauses);
-
-	if (nr_clauses == max_clauses) {
-		unsigned int new_max_clauses;
-		const char **new_clauses;
-
-		new_max_clauses = (max_clauses + 7) * 2;
-		new_clauses = realloc(clauses, new_max_clauses * sizeof(*clauses));
-		if (!new_clauses) {
-			fprintf(stderr, "error: out of memory\n");
-			exit(EXIT_FAILURE);
-		}
-
-		max_clauses = new_max_clauses;
-		clauses  = new_clauses;
-	}
-
-	clauses[nr_clauses++] = name;
-
 	va_list ap;
 	va_start(ap, nr_literals);
 
@@ -466,11 +446,29 @@ static void add_clause(const char *name, unsigned int nr_literals, ...)
 		DEBUG("%d ", lit);
 	}
 
-	picosat_add(0);
+	int clause_index = picosat_add(0);
 
 	DEBUG("\n");
 
 	va_end(ap);
+
+	if (clause_index >= max_clauses) {
+		unsigned int new_max_clauses;
+		const char **new_clauses;
+
+		new_max_clauses = (max_clauses + 7) * 2;
+		/* XXX: make sure it's bigger than clause_index */
+		new_clauses = realloc(clauses, new_max_clauses * sizeof(*clauses));
+		if (!new_clauses) {
+			fprintf(stderr, "error: out of memory\n");
+			exit(EXIT_FAILURE);
+		}
+
+		max_clauses = new_max_clauses;
+		clauses  = new_clauses;
+	}
+
+	clauses[clause_index] = name;
 }
 
 /* Use the Tseitin encoding to convert the boolean expression to CNF. The
@@ -1303,7 +1301,7 @@ int main(int argc, char *argv[])
 
 	assert(nr_bool_created == nr_bool_destroyed);
 
-	printf("%u clauses\n", nr_clauses);
+	printf("%u clauses\n", picosat_added_original_clauses());
 
 	{
 		/* First do a check to see if the instance is solvable
@@ -1317,7 +1315,7 @@ int main(int argc, char *argv[])
 			fprintf(stderr, "error: inconsistent kconfig files "
 				"(no valid configurations possible)\n");
 
-			for (i = 0; i < nr_clauses; ++i) {
+			for (i = 0; i < picosat_added_original_clauses(); ++i) {
 				if (picosat_coreclause(i))
 					fprintf(stderr, "clause: %d: %s\n", i, clauses[i]);
 			}
@@ -1370,7 +1368,7 @@ int main(int argc, char *argv[])
 		if (sat != PICOSAT_SATISFIABLE) {
 			fprintf(stderr, "error: unsatisfiable constraints\n");
 
-			for (i = 0; i < nr_clauses; ++i) {
+			for (i = 0; i < picosat_added_original_clauses(); ++i) {
 				if (picosat_coreclause(i))
 					fprintf(stderr, "clause: %s\n", clauses[i]);
 			}
