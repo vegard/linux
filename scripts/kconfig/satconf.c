@@ -477,41 +477,48 @@ static void add_clause(const char *name, unsigned int nr_literals, ...)
  *
  * This function returns the literal associated with the expression. The
  * boolean expression is left intact and must be freed by the called (no
- * references are taken).
- *
- * XXX: If a boolean expression is referenced more than once, it may
- * introduce a new variable for every occurrence. Fix that. */
+ * references are taken). */
 static int _add_clauses(struct bool_expr *e, const char *name)
 {
 	switch (e->op) {
-	case VAR:
-		return e->var;
+	case LITERAL:
+		return e->literal;
 
 	case NOT: {
 		int x = _add_clauses(e->unary, name);
-		return -x;
+		bool_put(e->unary);
+		e->op = LITERAL;
+		return (e->literal = -x);
 	}
 
 	case AND: {
 		int a = _add_clauses(e->binary.a, name);
+		bool_put(e->binary.a);
 		int b = _add_clauses(e->binary.b, name);
+		bool_put(e->binary.b);
+		int c = picosat_inc_max_var();
+		e->op = LITERAL;
+		e->literal = c;
 
-		int new_var = picosat_inc_max_var();
-		add_clause(name, 3, new_var, -a, -b);
-		add_clause(name, 2, -new_var, a);
-		add_clause(name, 2, -new_var, b);
-		return new_var;
+		add_clause(name, 3, c, -a, -b);
+		add_clause(name, 2, -c, a);
+		add_clause(name, 2, -c, b);
+		return c;
 	}
 
 	case OR: {
 		int a = _add_clauses(e->binary.a, name);
+		bool_put(e->binary.a);
 		int b = _add_clauses(e->binary.b, name);
+		bool_put(e->binary.b);
+		int c = picosat_inc_max_var();
+		e->op = LITERAL;
+		e->literal = c;
 
-		int new_var = picosat_inc_max_var();
-		add_clause(name, 3, -new_var, a, b);
-		add_clause(name, 2, new_var, -a);
-		add_clause(name, 2, new_var, -b);
-		return new_var;
+		add_clause(name, 3, -c, a, b);
+		add_clause(name, 2, c, -a);
+		add_clause(name, 2, c, -b);
+		return c;
 	}
 
 	default:
