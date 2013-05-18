@@ -210,7 +210,11 @@ static struct bool_expr *bool_dep(struct bool_expr *a, struct bool_expr *b)
 
 static struct bool_expr *bool_eq(struct bool_expr *a, struct bool_expr *b)
 {
-	/* XXX: Simplify if CONST, etc. */
+	if (a->op == CONST)
+		return a->nullary ? bool_get(b) : bool_not(b);
+	if (b->op == CONST)
+		return b->nullary ? bool_get(a) : bool_not(a);
+
 	struct bool_expr *e = bool_new(EQ);
 	e->binary.a = bool_get(a);
 	e->binary.b = bool_get(b);
