@@ -183,6 +183,7 @@ lxdialog := lxdialog/checklist.o lxdialog/util.o lxdialog/inputbox.o
 lxdialog += lxdialog/textbox.o lxdialog/yesno.o lxdialog/menubox.o
 
 conf-objs	:= conf.o  zconf.tab.o
+mconf-objs	:= mconf.o zconf.tab.o $(lxdialog)
 nconf-objs      := nconf.o zconf.tab.o nconf.gui.o
 satconf-objs	:= satconf.o zconf.tab.o picosat.o
 kxgettext-objs	:= kxgettext.o zconf.tab.o
