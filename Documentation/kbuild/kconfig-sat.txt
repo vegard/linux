@@ -358,6 +358,16 @@ B.2. Tips
 	helpful when debugging, to see if the clauses end up looking as
 	expected.
 
+* Debug using minimal Kconfig files instead of the top-level one:
+
+	$ make KBUILD_KCONFIG=Kconfig.debug satconfig 
+	scripts/kconfig/satconf Kconfig.debug
+	4 variables (2 symbols, 0 prompts, 2 defaults)
+	19 clauses
+	#
+	# configuration written to .config
+	#
+
 
 C. To-do
 --------
