@@ -12,6 +12,7 @@ enum bool_op {
 	NOT,
 	AND,
 	OR,
+	EQ,
 };
 
 struct bool_expr {
@@ -70,16 +71,25 @@ static void bool_put(struct bool_expr *e)
 	--e->refcount;
 	if (e->refcount == 0) {
 		switch (e->op) {
+		case CONST:
+			break;
+
+		case LITERAL:
+			break;
+
 		case NOT:
 			bool_put(e->unary);
 			break;
+
 		case AND:
 		case OR:
+		case EQ:
 			bool_put(e->binary.a);
 			bool_put(e->binary.b);
 			break;
+
 		default:
-			break;
+			assert(false);
 		}
 
 		free(e);
@@ -108,6 +118,7 @@ static bool bool_equal(struct bool_expr *a, struct bool_expr *b)
 
 	case AND:
 	case OR:
+	case EQ:
 		return bool_equal(a->binary.a, b->binary.a) && bool_equal(a->binary.b, b->binary.b);
 	default:
 		assert(false);
@@ -119,6 +130,8 @@ static struct bool_expr *bool_or(struct bool_expr *a, struct bool_expr *b);
 
 static struct bool_expr *bool_const(bool v)
 {
+	/* XXX: Integrate this with "bool_true" in satconf.c? */
+
 	static struct bool_expr bool_true = {
 		.op = CONST,
 		{ .nullary = true, },
@@ -148,48 +161,16 @@ static struct bool_expr *bool_var(unsigned int var)
 
 static struct bool_expr *bool_not(struct bool_expr *expr)
 {
+	if (expr->op == CONST)
+		return bool_const(!expr->nullary);
 	if (expr->op == LITERAL)
 		return bool_literal(-expr->literal);
-
-	switch (expr->op) {
-	case CONST:
-		return bool_const(!expr->nullary);
-
-	case NOT:
-		/* !!x => x */
+	if (expr->op == NOT)
 		return bool_get(expr->unary);
 
-	case AND:
-	{
-		/* !(a && b) => !a || !b */
-		struct bool_expr *t1, *t2, *ret;
-
-		t1 = bool_not(expr->binary.a);
-		t2 = bool_not(expr->binary.b);
-		ret = bool_or(t1, t2);
-
-		bool_put(t1);
-		bool_put(t2);
-		return ret;
-	}
-
-	case OR:
-	{
-		/* !(a || b) => !a && !b */
-		struct bool_expr *t1, *t2, *ret;
-
-		t1 = bool_not(expr->binary.a);
-		t2 = bool_not(expr->binary.b);
-		ret = bool_and(t1, t2);
-
-		bool_put(t1);
-		bool_put(t2);
-		return ret;
-	}
-
-	default:
-		assert(false);
-	}
+	struct bool_expr *e = bool_new(NOT);
+	e->unary = bool_get(expr);
+	return e;
 }
 
 static struct bool_expr *bool_and(struct bool_expr *a, struct bool_expr *b)
@@ -229,19 +210,19 @@ static struct bool_expr *bool_dep(struct bool_expr *a, struct bool_expr *b)
 
 static struct bool_expr *bool_eq(struct bool_expr *a, struct bool_expr *b)
 {
-	/* XXX: Introduce extra variables */
+	/* XXX: Simplify if CONST, etc. */
+	struct bool_expr *e = bool_new(EQ);
+	e->binary.a = bool_get(a);
+	e->binary.b = bool_get(b);
+	return e;
+}
 
-	/* a == b => (a && b) || (!a && !b) */
-	struct bool_expr *t1 = bool_and(a, b);
-	struct bool_expr *t2 = bool_not(a);
-	struct bool_expr *t3 = bool_not(b);
-	struct bool_expr *t4 = bool_and(t2, t3);
-	struct bool_expr *ret = bool_or(t1, t4);
+static struct bool_expr *bool_xor(struct bool_expr *a, struct bool_expr *b)
+{
+	struct bool_expr *t = bool_eq(a, b);
+	struct bool_expr *ret = bool_not(t);
 
-	bool_put(t1);
-	bool_put(t2);
-	bool_put(t3);
-	bool_put(t4);
+	bool_put(t);
 	return ret;
 }
 
@@ -271,6 +252,13 @@ static void bool_fprint(FILE *out, struct bool_expr *e)
 		fprintf(out, "(");
 		bool_fprint(out, e->binary.a);
 		fprintf(out, " || ");
+		bool_fprint(out, e->binary.b);
+		fprintf(out, ")");
+		break;
+	case EQ:
+		fprintf(out, "(");
+		bool_fprint(out, e->binary.a);
+		fprintf(out, " == ");
 		bool_fprint(out, e->binary.b);
 		fprintf(out, ")");
 		break;
