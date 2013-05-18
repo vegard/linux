@@ -19,6 +19,8 @@
 #define DEBUG(fmt, ...)
 #endif
 
+static struct bool_expr *bool_true;
+
 static unsigned int nr_symbol_variables;
 static struct symbol **symbol_variables;
 
@@ -481,6 +483,10 @@ static void add_clause(const char *name, unsigned int nr_literals, ...)
 static int _add_clauses(struct bool_expr *e, const char *name)
 {
 	switch (e->op) {
+	case CONST:
+		/* XXX: Do this properly. */
+		return e->nullary ? bool_true->literal : -bool_true->literal;
+
 	case LITERAL:
 		return e->literal;
 
@@ -521,8 +527,26 @@ static int _add_clauses(struct bool_expr *e, const char *name)
 		return c;
 	}
 
+	case EQ: {
+		int a = _add_clauses(e->binary.a, name);
+		bool_put(e->binary.a);
+		int b = _add_clauses(e->binary.b, name);
+		bool_put(e->binary.b);
+		int c = picosat_inc_max_var();
+		e->op = LITERAL;
+		e->literal = c;
+
+		add_clause(name, 3, c, a, b);
+		add_clause(name, 3, c, -a, -b);
+		add_clause(name, 3, -c, a, -b);
+		add_clause(name, 3, -c, -a, b);
+		return c;
+	}
+
 	default:
+		fprintf(stderr, "unknown expression!? ");
 		bool_fprint(stderr, e);
+		fprintf(stderr, "\n");
 		assert(false);
 	}
 }
@@ -1261,6 +1285,10 @@ int main(int argc, char *argv[])
 	 * picosat_inc_max_var() takes care of it. */
 	picosat_adjust(1 + nr_sat_variables);
 
+	/* Create a boolean variable that we force to be false */
+	bool_true = bool_var(picosat_inc_max_var());
+	add_clause("true", 1, bool_true->literal);
+
 	if (!build_clauses()) {
 		fprintf(stderr, "error: inconsistent kconfig files while "
 			"building clauses\n");
@@ -1306,6 +1334,7 @@ int main(int argc, char *argv[])
 	}
 #endif
 
+	bool_put(bool_true);
 	assert(nr_bool_created == nr_bool_destroyed);
 
 	printf("%u clauses\n", picosat_added_original_clauses());
