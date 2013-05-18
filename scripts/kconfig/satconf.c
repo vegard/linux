@@ -226,7 +226,7 @@ static void or_expr_to_bool_expr(struct symbol *lhs,
 {
 	struct bool_expr *a[2];
 	struct bool_expr *b[2];
-	struct bool_expr *t1, *t2, *t3, *t4;
+	struct bool_expr *t1, *t2, *t3;
 
 	expr_to_bool_expr(lhs, in_a, a);
 	expr_to_bool_expr(lhs, in_b, b);
@@ -234,20 +234,12 @@ static void or_expr_to_bool_expr(struct symbol *lhs,
 	t1 = bool_or(a[0], a[1]);
 	t2 = bool_or(b[0], b[1]);
 
-	out[0] = bool_or(t1, t2);
-	bool_put(t1);
-	bool_put(t2);
+	out[0] = bool_or_put(t1, t2);
 
 	t1 = bool_and(a[1], b[1]);
 	t2 = bool_dep(b[0], b[1]);
 	t3 = bool_dep(a[0], b[1]);
-	t4 = bool_and(t2, t3);
-	out[1] = bool_and(t1, t4);
-
-	bool_put(t1);
-	bool_put(t2);
-	bool_put(t3);
-	bool_put(t4);
+	out[1] = bool_and_put(t1, bool_and_put(t2, t3));
 
 	bool_put(a[0]);
 	bool_put(a[1]);
@@ -270,9 +262,7 @@ static void and_expr_to_bool_expr(struct symbol *lhs,
 	t1 = bool_and(a[0], b[1]);
 	t2 = bool_and(a[1], b[0]);
 
-	out[1] = bool_or(t1, t2);
-	bool_put(t1);
-	bool_put(t2);
+	out[1] = bool_or_put(t1, t2);
 
 	bool_put(a[0]);
 	bool_put(a[1]);
@@ -312,10 +302,8 @@ static struct bool_expr *equal_expr_to_bool_expr(struct symbol *in_a, struct sym
 
 		t1 = bool_eq(a[0], b[0]);
 		t2 = bool_eq(a[1], b[1]);
-		ret = bool_and(t1, t2);
+		ret = bool_and_put(t1, t2);
 
-		bool_put(t1);
-		bool_put(t2);
 		bool_put(a[0]);
 		bool_put(a[1]);
 		bool_put(b[0]);
@@ -366,9 +354,8 @@ static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_ex
 		struct bool_expr *t;
 
 		t = equal_expr_to_bool_expr(e->left.sym, e->right.sym);
-		result[0] = bool_not(t);
+		result[0] = bool_not_put(t);
 		result[1] = bool_const(false);
-		bool_put(t);
 		return;
 	}
 	case E_LIST:
@@ -394,15 +381,8 @@ static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_ex
 			 */
 			assert(lhs->type == S_TRISTATE);
 
-			struct bool_expr *t1, *t2;
-
-			t1 = bool_var(lhs->sat_variable);
-			t2 = bool_var(lhs->sat_variable + 1);
-			result[0] = bool_dep(t1, t2);
+			result[0] = bool_dep_put(bool_var(lhs->sat_variable), bool_var(lhs->sat_variable + 1));
 			result[1] = bool_const(false);
-
-			bool_put(t1);
-			bool_put(t2);
 			return;
 		}
 
@@ -616,7 +596,6 @@ static bool build_choice_clauses(struct symbol *sym)
 	if (!sym_is_optional(sym)) {
 		struct bool_expr *block;
 		struct bool_expr *any_visible;
-		struct bool_expr *t1;
 		struct bool_expr *dep;
 
 		/* This is a conjunction of all the choice values */
@@ -631,9 +610,7 @@ static bool build_choice_clauses(struct symbol *sym)
 				struct bool_expr *t1, *t2;
 
 				t1 = bool_var(choice->sat_variable);
-				t2 = bool_or(block, t1);
-				bool_put(block);
-				bool_put(t1);
+				t2 = bool_or_put(block, t1);
 				block = t2;
 			}
 		}
@@ -649,24 +626,13 @@ static bool build_choice_clauses(struct symbol *sym)
 			expr_list_for_each_sym(prop->expr, expr, choice) {
 				struct property *prompt;
 
-				for_all_prompts(choice, prompt) {
-					struct bool_expr *t;
-					struct bool_expr *old_any_visible;
-
-					t = bool_var(prompt->sat_variable);
-					any_visible = bool_or(old_any_visible = any_visible, t);
-					bool_put(old_any_visible);
-					bool_put(t);
-				}
+				for_all_prompts(choice, prompt)
+					any_visible = bool_or_put(any_visible, bool_var(prompt->sat_variable));
 			}
 		}
 
-		t1 = bool_and(visible, any_visible);
+		dep = bool_dep_put(bool_and(visible, any_visible), block);
 		bool_put(any_visible);
-
-		dep = bool_dep(t1, block);
-		bool_put(t1);
-		bool_put(block);
 
 		add_clauses(dep, "<choice block> depends on <one of the choices>");
 		bool_put(dep);
@@ -683,8 +649,7 @@ static bool build_choice_clauses(struct symbol *sym)
 			struct symbol *choice2;
 
 			t1 = bool_var(choice->sat_variable);
-			t2 = bool_not(t1);
-			bool_put(t1);
+			t2 = bool_not_put(t1);
 
 			expr_list_for_each_sym(prop->expr, expr2, choice2) {
 				struct bool_expr *t3, *t4, *t5;
@@ -694,8 +659,7 @@ static bool build_choice_clauses(struct symbol *sym)
 					continue;
 
 				t3 = bool_var(choice2->sat_variable);
-				t4 = bool_not(t3);
-				bool_put(t3);
+				t4 = bool_not_put(t3);
 
 				t5 = bool_or(t2, t4);
 				bool_put(t4);
@@ -724,14 +688,12 @@ static bool build_choice_clauses(struct symbol *sym)
 		 * they are anonymous... Yikes, I think we need to do something
 		 * like (any of the choices were forced). */
 		t1 = bool_var(sym_assumed(sym));
-		cond = bool_not(t1);
-		bool_put(t1);
+		cond = bool_not_put(t1);
 	}
 
 	for_all_defaults(sym, prop) {
 		struct bool_expr *e[2];
 		struct bool_expr *t1, *t2, *t3, *t4, *t5, *t6, *t7;
-		struct bool_expr *old_cond;
 		struct gstr str1, str2;
 
 		if (prop->visible.expr) {
@@ -750,24 +712,14 @@ static bool build_choice_clauses(struct symbol *sym)
 		bool_put(t1);
 
 		t4 = bool_not(t2);
-		cond = bool_and(old_cond = cond, t4);
-		bool_put(old_cond);
-		bool_put(t4);
+		cond = bool_and_put(cond, t4);
 
 		/* XXX: We want e[1] to be true if prop->expr a bool-type symbol */
 		expr_to_bool_expr(sym, prop->expr, e);
 
-		t5 = bool_and(e[0], e[1]);
-		bool_put(e[0]);
-		bool_put(e[1]);
-
-		t6 = bool_dep(t2, t5);
-		bool_put(t2);
-		bool_put(t5);
-
-		t7 = bool_and(t3, t6);
-		bool_put(t3);
-		bool_put(t6);
+		t5 = bool_and_put(e[0], e[1]);
+		t6 = bool_dep_put(t2, t5);
+		t7 = bool_and_put(t3, t6);
 
 		str1 = str_new();
 		expr_gstr_print(prop->expr, &str1);
@@ -860,18 +812,11 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 	expr_to_bool_expr(sym, prop->expr, e);
 
 	t1 = bool_var(sym->sat_variable);
-	t2 = bool_and(t1, condition[0]);
-	bool_put(t1);
-	bool_put(condition[0]);
+	t2 = bool_and_put(t1, condition[0]);
 	bool_put(condition[1]);
 
-	t3 = bool_and(e[0], e[1]);
-	bool_put(e[0]);
-	bool_put(e[1]);
-
-	t4 = bool_dep(t2, t3);
-	bool_put(t2);
-	bool_put(t3);
+	t3 = bool_and_put(e[0], e[1]);
+	t4 = bool_dep_put(t2, t3);
 
 	str1 = str_new();
 	expr_gstr_print(prop->expr, &str1);
@@ -907,27 +852,14 @@ static bool build_default_clauses(struct symbol *sym)
 	symbol_to_bool_expr(sym, sym_expr);
 
 	cond = bool_const(false);
-	for_all_prompts(sym, prop) {
-		struct bool_expr *t;
-		struct bool_expr *old_cond;
+	for_all_prompts(sym, prop)
+		cond = bool_or_put(cond, bool_var(prop->sat_variable));
 
-		t = bool_var(prop->sat_variable);
-		cond = bool_or(old_cond = cond, t);
-		bool_put(old_cond);
-		bool_put(t);
-	}
-
-	{
-		struct bool_expr *old_cond;
-
-		cond = bool_not(old_cond = cond);
-		bool_put(old_cond);
-	}
+	cond = bool_not_put(cond);
 
 	for_all_defaults(sym, prop) {
 		struct bool_expr *e[2];
 		struct bool_expr *t1, *t2, *t3, *t4, *t5, *t6, *t7, *t8, *t9;
-		struct bool_expr *old_cond;
 		struct gstr str1, str2;
 
 		/* XXX: This should be the "if" part of the expression. However,
@@ -951,9 +883,7 @@ static bool build_default_clauses(struct symbol *sym)
 
 		t4 = bool_not(t2);
 
-		cond = bool_and(old_cond = cond, t4);
-		bool_put(old_cond);
-		bool_put(t4);
+		cond = bool_and_put(cond, t4);
 
 		/* We pass NULL here, because we don't want "default m" to be
 		 * interpreted as FOO = (FOO = m) when we have config FOO
@@ -965,17 +895,9 @@ static bool build_default_clauses(struct symbol *sym)
 		t6 = bool_eq(sym_expr[1], e[1]);
 		bool_put(e[0]);
 		bool_put(e[1]);
-		t7 = bool_and(t5, t6);
-		bool_put(t5);
-		bool_put(t6);
-
-		t8 = bool_dep(t2, t7);
-		bool_put(t2);
-		bool_put(t7);
-
-		t9 = bool_and(t3, t8);
-		bool_put(t3);
-		bool_put(t8);
+		t7 = bool_and_put(t5, t6);
+		t8 = bool_dep_put(t2, t7);
+		t9 = bool_and_put(t3, t8);
 
 		str1 = str_new();
 		expr_gstr_print(prop->expr, &str1);
@@ -1081,9 +1003,7 @@ static bool build_default_clauses(struct symbol *sym, struct bool_expr *symbol_v
 		} else
 			continue;
 
-		cond = bool_or(old_cond = cond, conj);
-		bool_put(old_cond);
-		bool_put(conj);
+		cond = bool_or_put(cond, conj);
 
 		++nr_conjuncts;
 	}
@@ -1100,24 +1020,16 @@ static bool build_default_clauses(struct symbol *sym, struct bool_expr *symbol_v
 	t2 = bool_eq(value[1], symbol_value[1]);
 	bool_put(value[0]);
 	bool_put(value[1]);
-	t3 = bool_and(t1, t2);
-	bool_put(t1);
-	bool_put(t2);
+	t3 = bool_and_put(t1, t2);
 
-	t4 = bool_and(menu_cond[0], cond);
-	bool_put(menu_cond[0]);
+	t4 = bool_and_put(menu_cond[0], cond);
 	bool_put(menu_cond[1]);
-	bool_put(cond);
 
 	t5 = bool_not(visible);
 
-	t6 = bool_and(t4, t5);
-	bool_put(t4);
-	bool_put(t5);
+	t6 = bool_and_put(t4, t5);
 
-	t7 = bool_dep(t6, t3);
-	bool_put(t6);
-	bool_put(t3);
+	t7 = bool_dep_put(t6, t3);
 
 	cnf = bool_to_cnf(t7);
 	bool_put(t7);

@@ -173,6 +173,13 @@ static struct bool_expr *bool_not(struct bool_expr *expr)
 	return e;
 }
 
+static struct bool_expr *bool_not_put(struct bool_expr *expr)
+{
+	struct bool_expr *e = bool_new(NOT);
+	e->unary = expr;
+	return e;
+}
+
 static struct bool_expr *bool_and(struct bool_expr *a, struct bool_expr *b)
 {
 	if (a->op == CONST)
@@ -184,6 +191,15 @@ static struct bool_expr *bool_and(struct bool_expr *a, struct bool_expr *b)
 	e->binary.a = bool_get(a);
 	e->binary.b = bool_get(b);
 	return e;
+}
+
+static struct bool_expr *bool_and_put(struct bool_expr *a, struct bool_expr *b)
+{
+	/* XXX: Don't get in the first place */
+	struct bool_expr *ret = bool_and(a, b);
+	bool_put(a);
+	bool_put(b);
+	return ret;
 }
 
 static struct bool_expr *bool_or(struct bool_expr *a, struct bool_expr *b)
@@ -199,12 +215,30 @@ static struct bool_expr *bool_or(struct bool_expr *a, struct bool_expr *b)
 	return e;
 }
 
+static struct bool_expr *bool_or_put(struct bool_expr *a, struct bool_expr *b)
+{
+	/* XXX: Don't get in the first place */
+	struct bool_expr *ret = bool_or(a, b);
+	bool_put(a);
+	bool_put(b);
+	return ret;
+}
+
 static struct bool_expr *bool_dep(struct bool_expr *a, struct bool_expr *b)
 {
 	struct bool_expr *t = bool_not(a);
 	struct bool_expr *ret = bool_or(t, b);
 
 	bool_put(t);
+	return ret;
+}
+
+static struct bool_expr *bool_dep_put(struct bool_expr *a, struct bool_expr *b)
+{
+	/* XXX: Don't get in the first place */
+	struct bool_expr *ret = bool_dep(a, b);
+	bool_put(a);
+	bool_put(b);
 	return ret;
 }
 
