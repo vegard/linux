@@ -14,7 +14,7 @@
 #include "picosat.h"
 
 #if 0
-#define DEBUG(fmt, ...) printf(fmt, ## __VA_ARGS__)
+#define DEBUG(fmt, ...) fprintf(stderr, fmt, ## __VA_ARGS__)
 #else
 #define DEBUG(fmt, ...)
 #endif
@@ -411,11 +411,13 @@ static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_ex
 		 * was referenced in an arch-independent kconfig files.
 		 *
 		 * Assume it to be false. */
-		if (e->left.sym->type == S_UNKNOWN) {
+		if (e->left.sym->type == S_UNKNOWN || e->left.sym->type == S_STRING) {
 			result[0] = bool_const(false);
 			result[1] = bool_const(false);
 			return;
 		}
+
+		assert(e->left.sym->type == S_BOOLEAN || e->left.sym->type == S_TRISTATE);
 
 		result[0] = bool_var(e->left.sym->sat_variable);
 		/* XXX: hould this be true or false? It used to be false, but
@@ -443,6 +445,7 @@ static void add_clause(const char *name, unsigned int nr_literals, ...)
 	unsigned int i;
 	for (i = 0; i < nr_literals; ++i) {
 		int lit = va_arg(ap, int);
+		assert(lit != 0);
 		picosat_add(lit);
 
 		DEBUG("%d ", lit);
@@ -1451,12 +1454,12 @@ int main(int argc, char *argv[])
 	}
 
 	if (conf_write(".config")) {
-		fprintf(stderr, "error: writing configuration\n");
+		fprintf(stderr, "error: writing .config\n");
 		exit(EXIT_FAILURE);
 	}
 
 	if (conf_write_autoconf()) {
-		fprintf(stderr, "error: writing configuration\n");
+		fprintf(stderr, "error: writing autoconf.h\n");
 		exit(EXIT_FAILURE);
 	}
 
