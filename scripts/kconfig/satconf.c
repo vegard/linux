@@ -845,11 +845,13 @@ static bool build_default_clauses(struct symbol *sym)
 
 	symbol_to_bool_expr(sym, sym_expr);
 
-	cond = bool_get(sym->selected_expr);
+	cond = bool_var(sym_selected(sym));
 	for_all_prompts(sym, prop)
 		cond = bool_or_put(cond, bool_var(prop->sat_variable));
 
 	cond = bool_not_put(cond);
+
+	/* 'cond' now encodes "symbol was not selected and no prompt is visible" */
 
 	for_all_defaults(sym, prop) {
 		struct bool_expr *e[2];
@@ -860,6 +862,9 @@ static bool build_default_clauses(struct symbol *sym)
 		 * as it turns out, it is actually a conjunction of the menu's
 		 * dependencies AND the "if" part. (Note, however, the prompt's
 		 * dependencies are not included.) */
+		/* XXX: Maybe we should pass NULL for sym here? The idea being
+		 * that if the Kconfig has "default n if y" (which happens),
+		 * then this means "default n", noth "default n if <SYM>=y". */
 		if (prop->visible.expr) {
 			expr_to_bool_expr(sym, prop->visible.expr, e);
 		} else {
@@ -903,6 +908,7 @@ static bool build_default_clauses(struct symbol *sym)
 		str_free(&str2);
 	}
 
+/* XXX: We should be able to do this now, since we explicitly check for selects. */
 #if 0 /* XXX: We can't do it, because we need to allow for selects... */
 	/* If no default matched, force the symbol value to 'n'. */
 	{
@@ -973,7 +979,7 @@ static bool build_clauses(void)
 			cond = bool_or_put(cond, bool_var(prop->sat_variable));
 
 		struct bool_expr *dep = bool_dep_put(bool_var(sym_assumed(sym)), cond);
-		add_clauses(dep, "%s has at least one prompt if entered by the uesr", sym->name);
+		add_clauses(dep, "%s has at least one prompt if entered by the user", sym->name);
 		bool_put(dep);
 	}
 
