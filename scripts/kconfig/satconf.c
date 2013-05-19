@@ -965,6 +965,16 @@ static bool build_clauses(void)
 
 		if (!build_sym_select_clauses(sym))
 			return false;
+
+		/* If a symbol is entered by the user, at least one of its
+		 * prompts must be visible. */
+		struct bool_expr *cond = bool_const(false);
+		for_all_prompts(sym, prop)
+			cond = bool_or_put(cond, bool_var(prop->sat_variable));
+
+		struct bool_expr *dep = bool_dep_put(bool_var(sym_assumed(sym)), cond);
+		add_clauses(dep, "%s has at least one prompt if entered by the uesr", sym->name);
+		bool_put(dep);
 	}
 
 	for_all_symbols(i, sym) {
