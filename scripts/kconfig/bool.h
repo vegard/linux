@@ -255,6 +255,15 @@ static struct bool_expr *bool_eq(struct bool_expr *a, struct bool_expr *b)
 	return e;
 }
 
+static struct bool_expr *bool_eq_put(struct bool_expr *a, struct bool_expr *b)
+{
+	/* XXX: Don't get in the first place */
+	struct bool_expr *ret = bool_eq(a, b);
+	bool_put(a);
+	bool_put(b);
+	return ret;
+}
+
 static struct bool_expr *bool_xor(struct bool_expr *a, struct bool_expr *b)
 {
 	struct bool_expr *t = bool_eq(a, b);
