@@ -845,7 +845,7 @@ static bool build_default_clauses(struct symbol *sym)
 
 	symbol_to_bool_expr(sym, sym_expr);
 
-	cond = bool_const(false);
+	cond = bool_get(sym->selected_expr);
 	for_all_prompts(sym, prop)
 		cond = bool_or_put(cond, bool_var(prop->sat_variable));
 
