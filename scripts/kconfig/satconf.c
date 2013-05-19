@@ -793,6 +793,17 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 
 	expr_to_bool_expr(sym, prop->expr, e);
 
+	/* Update the selected symbol's 'selected_expr' to reflect that this
+	 * symbol may have selected it. */
+	{
+		/* The symbol being selected */
+		assert(prop->expr->type == E_SYMBOL);
+		struct symbol *selected_sym = prop->expr->left.sym;
+		/* XXX: And for other symbols? */
+		if (selected_sym->type == S_BOOLEAN || selected_sym->type == S_TRISTATE)
+			selected_sym->selected_expr = bool_or_put(selected_sym->selected_expr, bool_var(sym->sat_variable));
+	}
+
 	t2 = bool_and_put(bool_var(sym->sat_variable), condition[0]);
 	bool_put(condition[1]);
 
@@ -919,6 +930,13 @@ static bool build_clauses(void)
 	struct symbol *sym;
 
 	for_all_symbols(i, sym) {
+		if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
+			continue;
+
+		sym->selected_expr = bool_const(false);
+	}
+
+	for_all_symbols(i, sym) {
 		if (sym_is_choice(sym)) {
 			if (!build_choice_clauses(sym))
 				return false;
@@ -947,6 +965,15 @@ static bool build_clauses(void)
 
 		if (!build_sym_select_clauses(sym))
 			return false;
+	}
+
+	for_all_symbols(i, sym) {
+		if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
+			continue;
+
+		struct bool_expr *e = bool_eq_put(bool_var(sym_selected(sym)), sym->selected_expr);
+		add_clauses(e, "%s selected", sym->name);
+		bool_put(e);
 	}
 
 	return true;
