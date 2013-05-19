@@ -72,6 +72,8 @@ enum {
 	S_DEF_COUNT
 };
 
+struct bool_expr;
+
 struct symbol {
 	struct symbol *next;
 	char *name;
@@ -89,6 +91,7 @@ struct symbol {
 	/* S_BOOLEAN symbols have one variable, while S_TRISTATE symbols
 	 * have two. */
 	unsigned int sat_variable;
+	struct bool_expr *selected_expr;
 };
 
 #define for_all_symbols(i, sym) for (i = 0; i < SYMBOL_HASHSIZE; i++) for (sym = symbol_hash[i]; sym; sym = sym->next) if (sym->type != S_OTHER)
