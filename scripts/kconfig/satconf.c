@@ -13,7 +13,9 @@
 #include "lkc.h"
 #include "picosat.h"
 
-#if 0
+#define CONFIG_DEBUG 0
+
+#if CONFIG_DEBUG
 #define DEBUG(fmt, ...) fprintf(stderr, fmt, ## __VA_ARGS__)
 #else
 #define DEBUG(fmt, ...)
@@ -523,6 +525,12 @@ static void add_clauses(struct bool_expr *e, const char *fmt, ...)
 	va_start(ap, fmt);
 	vasprintf(&name, fmt, ap);
 	va_end(ap);
+
+#if CONFIG_DEBUG
+	fprintf(stderr, "%s: ", name);
+	bool_fprint(stderr, e);
+	fprintf(stderr, "\n");
+#endif
 
 	/* XXX: Should REALLY fix this. It introduces way too many unit
 	 * clauses. We can and should simplify before passing the clauses
