@@ -56,6 +56,13 @@ static unsigned int sym_assumed(struct symbol *sym)
 	return sym->sat_variable + (sym->type == S_TRISTATE) + 1;
 }
 
+/* Returns the variable indicating whether the symbol was selected */
+static unsigned int sym_selected(struct symbol *sym)
+{
+	assert(sym->type == S_BOOLEAN || sym->type == S_TRISTATE);
+	return sym->sat_variable + (sym->type == S_TRISTATE) + 2;
+}
+
 static const char **clauses;
 static unsigned int max_clauses;
 
@@ -78,10 +85,10 @@ static void assign_sat_variables(void)
 
 		switch (sym->type) {
 		case S_BOOLEAN:
-			nr_symbol_variables += 2;
+			nr_symbol_variables += 3;
 			break;
 		case S_TRISTATE:
-			nr_symbol_variables += 3;
+			nr_symbol_variables += 4;
 			break;
 		default:
 			break;
@@ -105,14 +112,16 @@ static void assign_sat_variables(void)
 		case S_BOOLEAN:
 			DEBUG("var %d = bool symbol %s\n", variable, sym->name ?: "<unknown>");
 			sym->sat_variable = variable;
-			variable += 2;
+			variable += 3;
+			symbol_variables[symbol_variable++] = sym;
 			symbol_variables[symbol_variable++] = sym;
 			symbol_variables[symbol_variable++] = sym;
 			break;
 		case S_TRISTATE:
 			DEBUG("var %d = tristate symbol %s\n", variable, sym->name ?: "<unknown>");
 			sym->sat_variable = variable;
-			variable += 3;
+			variable += 4;
+			symbol_variables[symbol_variable++] = sym;
 			symbol_variables[symbol_variable++] = sym;
 			symbol_variables[symbol_variable++] = sym;
 			symbol_variables[symbol_variable++] = sym;
