@@ -34,30 +34,6 @@ static struct property **default_variables;
  * encoding) */
 static unsigned int nr_sat_variables;
 
-static bool is_symbol_variable(unsigned int var)
-{
-	unsigned int x = var - 1;
-	return x < nr_symbol_variables;
-}
-
-static bool is_prompt_variable(unsigned int var)
-{
-	unsigned int x = var - 1 - nr_symbol_variables;
-	return x < nr_prompt_variables;
-}
-
-static struct symbol *get_symbol_variable(unsigned int var)
-{
-	assert(is_symbol_variable(var));
-	return symbol_variables[var - 1];
-}
-
-static struct property *get_prompt_variable(unsigned int var)
-{
-	assert(is_prompt_variable(var));
-	return prompt_variables[var - 1 - nr_symbol_variables];
-}
-
 static unsigned int sym_y(struct symbol *sym)
 {
 	assert(sym->type == S_BOOLEAN || sym->type == S_TRISTATE);
@@ -553,17 +529,6 @@ static void add_clauses(struct bool_expr *e, const char *fmt, ...)
 	 * to the SAT solver. */
 	int x = _add_clauses(e, name);
 	add_clause(name, 1, x);
-}
-
-static const char *get_variable_name(unsigned int var)
-{
-	if (is_symbol_variable(var))
-		return get_symbol_variable(var)->name;
-	if (is_prompt_variable(var))
-		return get_prompt_variable(var)->sym->name;
-
-	/* Is Tseitin-encoding variable */
-	assert(false);
 }
 
 static bool build_choice_clauses(struct symbol *sym)
