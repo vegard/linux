@@ -772,7 +772,7 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 {
 	struct bool_expr *condition[2];
 	struct bool_expr *e[2];
-	struct bool_expr *t1, *t2, *t3, *t4;
+	struct bool_expr *t2, *t3, *t4;
 	struct gstr str1, str2;
 
 	if (prop->visible.expr) {
@@ -784,8 +784,7 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 
 	expr_to_bool_expr(sym, prop->expr, e);
 
-	t1 = bool_var(sym->sat_variable);
-	t2 = bool_and_put(t1, condition[0]);
+	t2 = bool_and_put(bool_var(sym->sat_variable), condition[0]);
 	bool_put(condition[1]);
 
 	t3 = bool_and_put(e[0], e[1]);
@@ -810,8 +809,10 @@ static bool build_sym_select_clauses(struct symbol *sym)
 {
 	struct property *prop;
 
-	for_all_properties(sym, prop, P_SELECT)
-		build_select_clauses(sym, prop);
+	for_all_properties(sym, prop, P_SELECT) {
+		if (!build_select_clauses(sym, prop))
+			return false;
+	}
 
 	return true;
 }
