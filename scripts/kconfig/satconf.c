@@ -908,8 +908,6 @@ static bool build_default_clauses(struct symbol *sym)
 		str_free(&str2);
 	}
 
-/* XXX: We should be able to do this now, since we explicitly check for selects. */
-#if 0 /* XXX: We can't do it, because we need to allow for selects... */
 	/* If no default matched, force the symbol value to 'n'. */
 	{
 		struct bool_expr *t1, *t2;
@@ -921,7 +919,6 @@ static bool build_default_clauses(struct symbol *sym)
 		add_clauses(t2, "%s (implicit) default n", sym->name);
 		bool_put(t2);
 	}
-#endif
 
 	bool_put(sym_expr[0]);
 	bool_put(sym_expr[1]);
