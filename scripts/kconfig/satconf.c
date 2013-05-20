@@ -1033,6 +1033,11 @@ int main(int argc, char *argv[])
 	 * tristate) variables. This should go away when we read .satconfig
 	 * instead for these kinds of variables. */
 	conf_read_simple(NULL, S_DEF_USER);
+	/* We need to override the S_DEF_USER values from the default
+	 * configuration with the corresponding values from .satconfig,
+	 * because S_DEF_USER influences the operation of the main kconfig
+	 * machinery. */
+	conf_read_simple(".satconfig", S_DEF_USER);
 	conf_read_simple(".satconfig", S_DEF_SAT);
 
 	{
