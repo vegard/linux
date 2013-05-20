@@ -23,6 +23,9 @@ menuconfig: $(obj)/mconf
 satconfig: $(obj)/satconf
 	$< $(Kconfig)
 
+satrandconfig: $(obj)/satconf
+	$< --random $(Kconfig)
+
 config: $(obj)/conf
 	$< --oldaskconfig $(Kconfig)
 
@@ -119,6 +122,8 @@ help:
 	@echo  '  listnewconfig   - List new options'
 	@echo  '  oldnoconfig     - Same as silentoldconfig but sets new symbols to their default value'
 	@echo  '  satconfig       - New config satisfying the choices in .satconfig'
+	@echo  '  satrandconfig	  - New config satisfying the choices in .satconfig and random answer'
+	@echo  '                    to all other options'
 
 # lxdialog stuff
 check-lxdialog  := $(srctree)/$(src)/lxdialog/check-lxdialog.sh
@@ -168,6 +173,10 @@ ifeq ($(MAKECMDGOALS),update-po-config)
 endif
 
 ifeq ($(MAKECMDGOALS),satconfig)
+	hostprogs-y += satconf
+endif
+
+ifeq ($(MAKECMDGOALS),satrandconfig)
 	hostprogs-y += satconf
 endif
 
