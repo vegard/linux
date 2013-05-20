@@ -30,6 +30,9 @@ menuconfig: $(obj)/mconf
 satconfig: $(obj)/satconf
 	$< $(silent) $(Kconfig)
 
+satrandconfig: $(obj)/satconf
+	$< $(silent) --random $(Kconfig)
+
 config: $(obj)/conf
 	$< $(silent) --oldaskconfig $(Kconfig)
 
@@ -140,6 +143,7 @@ help:
 	@echo  '  xconfig	  - Update current config utilising a Qt based front-end'
 	@echo  '  gconfig	  - Update current config utilising a GTK+ based front-end'
 	@echo  '  satconfig       - New config respecting the .satconfig constraints'
+	@echo  '  satrandconfig	  - New config respecting .satconfig with random answers'
 	@echo  '  oldconfig	  - Update current config utilising a provided .config as base'
 	@echo  '  localmodconfig  - Update current config disabling modules not loaded'
 	@echo  '  localyesconfig  - Update current config converting local mods to core'
