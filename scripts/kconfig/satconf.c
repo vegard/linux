@@ -1082,14 +1082,6 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-#if 0
-	if (!build_all_default_clauses()) {
-		fprintf(stderr, "error: inconsistent kconfig files while "
-			"building default clauses\n");
-		exit(EXIT_FAILURE);
-	}
-#endif
-
 	{
 		/* Modules are preferred over built-ins; tell that to the
 		 * solver. XXX: This is rather fragile, there is a
@@ -1106,20 +1098,6 @@ int main(int argc, char *argv[])
 	}
 
 	picosat_set_default_phase_lit(modules_sym->sat_variable, 1);
-
-#if 0
-	{
-		unsigned int i;
-		struct symbol *sym;
-
-		for_all_symbols(i, sym) {
-			if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
-				continue;
-			if (!build_visible(sym))
-				return false;
-		}
-	}
-#endif
 
 	bool_put(bool_true);
 	assert(nr_bool_created == nr_bool_destroyed);
