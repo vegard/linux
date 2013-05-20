@@ -1002,16 +1002,16 @@ static void check_sym_value(struct symbol *sym, tristate value)
 		[yes] = "yes",
 	};
 
-	if (sym->curr.tri == value)
-		return;
+	if (sym->flags & (SYMBOL_DEF << S_DEF_SAT)) {
+		if (sym->curr.tri != value) {
+			fprintf(stderr, "warning: symbol %s changed from %s to %s\n",
+				sym->name ?: "<choice>",
+				tristate_names[value],
+				tristate_names[sym->curr.tri]);
 
-#if 1
-	fprintf(stderr, "warning: symbol %s changed from %s to %s\n",
-		sym->name ?: "<choice>",
-		tristate_names[value],
-		tristate_names[sym->curr.tri]);
-#endif
-	++nr_changed;
+			++nr_changed;
+		}
+	}
 }
 
 int main(int argc, char *argv[])
@@ -1228,10 +1228,12 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
+#if 0 /* XXX: Let the build system take care of this. */
 	if (conf_write_autoconf()) {
 		fprintf(stderr, "error: writing autoconf.h\n");
 		exit(EXIT_FAILURE);
 	}
+#endif
 
 	{
 		/* Check that none of the symbol values changed while writing
