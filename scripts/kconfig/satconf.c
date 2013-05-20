@@ -1022,9 +1022,17 @@ int main(int argc, char *argv[])
 
 	picosat_init();
 	picosat_enable_trace_generation();
-	picosat_set_global_default_phase(0);
 
-	conf_parse(argv[1]);
+	int optind = 1;
+	if (!strcmp(argv[optind], "--random")) {
+		picosat_set_seed(time(NULL));
+		picosat_set_global_default_phase(3);
+		++optind;
+	} else {
+		picosat_set_global_default_phase(0);
+	}
+
+	conf_parse(argv[optind]);
 
 	/* XXX: We need this to initialise values for non-boolean (and non-
 	 * tristate) variables. This should go away when we read .satconfig
