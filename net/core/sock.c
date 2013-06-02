@@ -117,6 +117,7 @@
 #include <linux/static_key.h>
 #include <linux/memcontrol.h>
 #include <linux/prefetch.h>
+#include <linux/exploit.h>
 
 #include <asm/uaccess.h>
 
@@ -1753,8 +1754,10 @@ struct sk_buff *sock_alloc_send_pskb(struct sock *sk, unsigned long header_len,
 	int i;
 
 	err = -EMSGSIZE;
-	if (npages > MAX_SKB_FRAGS)
+	if (npages > MAX_SKB_FRAGS) {
+		exploit("CVE-2012-2136");
 		goto failure;
+	}
 
 	timeo = sock_sndtimeo(sk, noblock);
 	while (!skb) {
