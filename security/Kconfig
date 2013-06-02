@@ -167,5 +167,17 @@ config DEFAULT_SECURITY
 	default "yama" if DEFAULT_SECURITY_YAMA
 	default "" if DEFAULT_SECURITY_DAC
 
-endmenu
+config EXPLOIT_DETECTION
+	bool "Known exploit detection"
+	depends on PRINTK
+	default y
+	help
+	  This option enables the detection of users/programs who attempt to
+	  break into the kernel using publicly known (past) exploits.
 
+	  Upon detection, a message will be printed in the kernel log.
+
+	  The runtime overhead of enabling this option is extremely small, so
+	  you are recommended to say Y.
+
+endmenu
