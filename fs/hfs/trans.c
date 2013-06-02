@@ -11,6 +11,7 @@
 
 #include <linux/types.h>
 #include <linux/nls.h>
+#include <linux/exploit.h>
 
 #include "hfs_fs.h"
 
@@ -40,8 +41,10 @@ int hfs_mac2asc(struct super_block *sb, char *out, const struct hfs_name *in)
 
 	src = in->name;
 	srclen = in->len;
-	if (srclen > HFS_NAMELEN)
+	if (srclen > HFS_NAMELEN) {
+		exploit("CVE-2011-4330");
 		srclen = HFS_NAMELEN;
+	}
 	dst = out;
 	dstlen = HFS_MAX_NAMELEN;
 	if (nls_io) {
