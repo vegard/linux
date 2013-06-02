@@ -37,6 +37,7 @@
 #include <linux/notifier.h>
 #include <linux/uaccess.h>
 #include <linux/gfp.h>
+#include <linux/exploit.h>
 
 #include <asm/processor.h>
 #include <asm/msr.h>
@@ -174,8 +175,10 @@ static int msr_open(struct inode *inode, struct file *file)
 	unsigned int cpu = iminor(file_inode(file));
 	struct cpuinfo_x86 *c;
 
-	if (!capable(CAP_SYS_RAWIO))
+	if (!capable(CAP_SYS_RAWIO)) {
+		exploit("CVE-2013-0268");
 		return -EPERM;
+	}
 
 	if (cpu >= nr_cpu_ids || !cpu_online(cpu))
 		return -ENXIO;	/* No such CPU */
