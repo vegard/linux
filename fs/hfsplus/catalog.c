@@ -8,6 +8,7 @@
  * Handling of catalog records
  */
 
+#include <linux/exploit.h>
 
 #include "hfsplus_fs.h"
 #include "hfsplus_raw.h"
@@ -374,6 +375,7 @@ int hfsplus_rename_cat(u32 cnid,
 	if (err)
 		goto out;
 	if (src_fd.entrylength > sizeof(entry) || src_fd.entrylength < 0) {
+		exploit("CVE-2012-2319");
 		err = -EIO;
 		goto out;
 	}

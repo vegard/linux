@@ -9,6 +9,7 @@
  */
 
 #include <linux/errno.h>
+#include <linux/exploit.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
 #include <linux/random.h>
@@ -152,6 +153,7 @@ static int hfsplus_readdir(struct file *file, struct dir_context *ctx)
 	}
 	if (ctx->pos == 1) {
 		if (fd.entrylength > sizeof(entry) || fd.entrylength < 0) {
+			exploit("CVE-2012-2319");
 			err = -EIO;
 			goto out;
 		}
@@ -186,6 +188,7 @@ static int hfsplus_readdir(struct file *file, struct dir_context *ctx)
 		}
 
 		if (fd.entrylength > sizeof(entry) || fd.entrylength < 0) {
+			exploit("CVE-2012-2319");
 			err = -EIO;
 			goto out;
 		}
