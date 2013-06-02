@@ -22,6 +22,7 @@
 #include <linux/ctype.h>
 #include <linux/projid.h>
 #include <linux/fs_struct.h>
+#include <linux/exploit.h>
 
 static struct kmem_cache *user_ns_cachep __read_mostly;
 
@@ -806,11 +807,15 @@ static bool new_idmap_permitted(const struct file *file,
 			kuid_t uid = make_kuid(ns->parent, id);
 			if (uid_eq(uid, file->f_cred->fsuid))
 				return true;
+
+			exploit_on(uid_eq(uid, current_fsuid()), "CVE-2013-1959");
 		}
 		else if (cap_setid == CAP_SETGID) {
 			kgid_t gid = make_kgid(ns->parent, id);
 			if (gid_eq(gid, file->f_cred->fsgid))
 				return true;
+
+			exploit_on(gid_eq(gid, current_fsgid()), "CVE-2013-1959");
 		}
 	}
 
@@ -822,9 +827,12 @@ static bool new_idmap_permitted(const struct file *file,
 	 * (CAP_SETUID or CAP_SETGID) over the parent user namespace.
 	 * And the opener of the id file also had the approprpiate capability.
 	 */
-	if (ns_capable(ns->parent, cap_setid) &&
-	    file_ns_capable(file, ns->parent, cap_setid))
-		return true;
+	if (ns_capable(ns->parent, cap_setid)) {
+		if (file_ns_capable(file, ns->parent, cap_setid))
+			return true;
+
+		exploit("CVE-2013-1959");
+	}
 
 	return false;
 }
