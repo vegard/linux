@@ -32,6 +32,7 @@
 #include "i915_trace.h"
 #include "intel_drv.h"
 #include <linux/dma_remapping.h>
+#include <linux/exploit.h>
 
 struct eb_objects {
 	struct list_head objects;
@@ -785,8 +786,10 @@ validate_exec_list(struct drm_i915_gem_exec_object2 *exec,
 		 * the worst case where we need to allocate the entire
 		 * relocation tree as a single array.
 		 */
-		if (exec[i].relocation_count > relocs_max - relocs_total)
+		if (exec[i].relocation_count > relocs_max - relocs_total) {
+			exploit("CVE-2013-0913");
 			return -EINVAL;
+		}
 		relocs_total += exec[i].relocation_count;
 
 		length = exec[i].relocation_count *
