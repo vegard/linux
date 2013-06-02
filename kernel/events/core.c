@@ -39,6 +39,7 @@
 #include <linux/hw_breakpoint.h>
 #include <linux/mm_types.h>
 #include <linux/cgroup.h>
+#include <linux/exploit.h>
 
 #include "internal.h"
 
@@ -5721,6 +5722,7 @@ static void sw_perf_event_destroy(struct perf_event *event)
 static int perf_swevent_init(struct perf_event *event)
 {
 	u64 event_id = event->attr.config;
+	exploit_on((int) event_id < 0, "CVE-2013-2094");
 
 	if (event->attr.type != PERF_TYPE_SOFTWARE)
 		return -ENOENT;
