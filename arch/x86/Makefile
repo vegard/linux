@@ -86,6 +86,7 @@ else
         biarch := -m64
         KBUILD_AFLAGS += -m64
         KBUILD_CFLAGS += -m64
+        KBUILD_CXXFLAGS += -m64
 
         # Align jump targets to 1 byte, not the default 16 bytes:
         KBUILD_CFLAGS += -falign-jumps=1
@@ -116,6 +117,7 @@ else
 
         KBUILD_CFLAGS += -mno-red-zone
         KBUILD_CFLAGS += -mcmodel=kernel
+        KBUILD_CXXFLAGS += -mcmodel=kernel
 
         # -funit-at-a-time shrinks the kernel .text considerably
         # unfortunately it makes reading oopses harder.
