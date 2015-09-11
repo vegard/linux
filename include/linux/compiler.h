@@ -8,6 +8,7 @@
 #define typeof __typeof__
 #endif
 
+
 #ifdef __CHECKER__
 # define __user		__attribute__((noderef, address_space(1)))
 # define __kernel	__attribute__((address_space(0)))
@@ -261,7 +262,7 @@ static __always_inline void __write_once_size(volatile void *p, void *res, int s
  */
 
 #define READ_ONCE(x) \
-	({ union { typeof(x + 0) __val; char __c[1]; } __u; __read_once_size(&(x), __u.__c, sizeof(x)); __u.__val; })
+	({ char __u[sizeof(x)]; __read_once_size(&(x), __u, sizeof(x)); *(typeof(x) *) &__u; })
 
 #define WRITE_ONCE(x, val) \
 ({							\
