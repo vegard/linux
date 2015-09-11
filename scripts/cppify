@@ -1,0 +1,143 @@
+#! /usr/bin/env python
+
+import os
+import sys
+import subprocess
+import re
+
+def git(*args):
+    return subprocess.check_output(('git', ) + args).splitlines()
+
+def replace(paths, pattern, replacement):
+    prog = re.compile(pattern)
+
+    for path in paths:
+        #if path != 'arch/x86/include/asm/cmpxchg.h':
+        #    continue
+
+        print "%s: %s" % (path, pattern)
+
+        with open(path, 'w') as f:
+            changed = False
+
+            in_macro = None
+            for line in git('show', 'HEAD:' + path):
+                m = re.match(r'\s*#\s*define\s+(\S+)\s*\((?P<args>[^\)]*)', line)
+                if m:
+                    in_macro = re.split(r',\s*', m.group('args'))
+
+                new_line = prog.sub(lambda x: replacement(x, in_macro), line)
+
+                print >>f, new_line
+
+                if in_macro and not line.endswith('\\'):
+                    in_macro = None
+
+                changed = changed or (line != new_line)
+
+        if changed:
+            git('add', path)
+            git('commit', '--message', "[cppify] %s" % path)
+
+def fix_extern_asmlinkage():
+    paths = [
+        'arch/x86/include/asm/processor.h',
+        'arch/x86/include/asm/special_insns.h',
+        'include/linux/printk.h',
+        'include/linux/sched.h',
+    ]
+
+    replace(paths, r'extern asmlinkage', lambda *args: 'extern_asmlinkage')
+
+def fix_keyword(paths, keyword):
+    pattern = r'(?!cpp_protect\()\b(' + keyword + r')\b(?!_)'
+
+    def replacement(x, macro_args):
+        print "replacement(%s, %s)"% (repr(x), repr(macro_args))
+
+        if macro_args and keyword in macro_args:
+            return '%s_' % keyword
+
+        return 'cpp_protect(%s)' % keyword
+
+    replace(paths, pattern, replacement)
+
+
+def fix_keywords():
+    keywords = {
+        'and': [
+            'include/linux/cpumask.h',
+        ],
+        'new': [
+            'arch/x86/include/asm/atomic.h',
+            'arch/x86/include/asm/atomic64_64.h',
+            'arch/x86/include/asm/cmpxchg.h',
+            'arch/x86/include/asm/pgtable_types.h',
+            'include/linux/bitmap.h',
+            'include/linux/list.h',
+            'include/linux/string.h',
+            'include/linux/wait.h',
+            'include/linux/rbtree.h',
+            'include/linux/ioport.h',
+            'include/linux/llist.h',
+            'include/linux/pid.h',
+            'include/linux/rculist.h',
+            'include/linux/kmod.h',
+        ],
+        'private': [
+            'include/linux/wait.h',
+            'include/linux/sched.h',
+            'include/linux/mm.h',
+            'include/linux/mm_types.h',
+            'include/linux/cgroup-defs.h',
+        ],
+    }
+
+    for keyword, paths in keywords.iteritems():
+        fix_keyword(paths, keyword)
+
+def fix_user_defined_literals():
+    """
+    C++11 user-defined literals include anything that looks like:
+
+        "foobar"_km
+
+    This causes problems because the kernel was written assuming this
+    would simply cause string concatenation when _km is a string.
+
+    To fix this, we need to add a space between them.
+
+    References: http://en.cppreference.com/w/cpp/language/user_literal
+    """
+
+    macros = {
+        '__stringify': [
+            'arch/x86/include/asm/percpu.h',
+        ],
+        '__percpu_arg': [
+            'arch/x86/include/asm/switch_to.h',
+            'arch/x86/include/asm/percpu.h',
+        ],
+    }
+
+    for macro, paths in macros.iteritems():
+        replace(paths, '"' + macro, lambda *args: '" ' + macro)
+
+#fix_extern_asmlinkage()
+#fix_keywords()
+#fix_user_defined_literals()
+
+#fix_keyword(['include/linux/sysfs.h'], 'private')
+#fix_keyword(['include/linux/kobject.h'], 'namespace')
+#fix_keyword(['include/linux/mod_devicetable.h'], 'class')
+#fix_keyword(['include/linux/device.h'], 'class')
+#fix_keyword(['include/linux/device.h'], 'namespace')
+#fix_keyword(['include/linux/pci.h'], 'class')
+#fix_keyword(['include/linux/mm.h'], 'new')
+
+#replace(['arch/x86/include/asm/hw_irq.h'], r'extern asmlinkage', lambda *args: 'extern_asmlinkage')
+#fix_keyword(['include/linux/irq.h'], 'new')
+#fix_keyword(['include/linux/irqdesc.h'], 'class')
+#fix_keyword(['include/linux/irq.h'], 'private')
+#fix_keyword(['include/linux/uio.h'], 'new')
+fix_keyword(['include/linux/dmaengine.h'], 'private')
