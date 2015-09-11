@@ -21,6 +21,15 @@
 #define asmlinkage CPP_ASMLINKAGE
 #endif
 
+/* C++ doesn't handle the resulting 'extern extern "C"' when you specify a
+ * function with 'extern asmlinkage', so we instead provide an
+ * 'extern_asmlinkage' macro that does the right thing for both C and C++. */
+#ifdef __cplusplus
+#define extern_asmlinkage CPP_ASMLINKAGE
+#else
+#define extern_asmlinkage extern
+#endif
+
 #ifndef cond_syscall
 #define cond_syscall(x)	asm(				\
 	".weak " VMLINUX_SYMBOL_STR(x) "\n\t"		\
