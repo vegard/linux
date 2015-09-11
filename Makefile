@@ -398,7 +398,7 @@ KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -std=gnu89
 
 # TODO
-KBUILD_CXXFLAGS := -Wall -std=c++11
+KBUILD_CXXFLAGS := -Wall -std=c++11 -fpermissive
 
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
