@@ -64,7 +64,14 @@ extern void __chk_io_ptr(const volatile void __iomem *);
 #ifdef CC_USING_HOTPATCH
 #define notrace __attribute__((hotpatch(0,0)))
 #else
+#if defined(__cplusplus) && GCC_VERSION <= 40900
+/* GCC < 4.9.0 doesn't handle no_instrument_function:
+ * https://gcc.gnu.org/bugzilla/show_bug.cgi?id=49718
+ * TODO: pass -fno-instrument-functions instead */
+#define notrace
+#else
 #define notrace __attribute__((no_instrument_function))
+#endif
 #endif
 
 /* Intel compiler defines __GNUC__. So we will overwrite implementations

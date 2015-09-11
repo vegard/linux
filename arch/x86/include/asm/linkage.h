@@ -4,7 +4,14 @@
 #include <linux/stringify.h>
 
 #undef notrace
+#if defined(__cplusplus) && GCC_VERSION <= 40900
+/* GCC < 4.9.0 doesn't handle no_instrument_function:
+ * https://gcc.gnu.org/bugzilla/show_bug.cgi?id=49718
+ * TODO: pass -fno-instrument-functions instead */
+#define notrace
+#else
 #define notrace __attribute__((no_instrument_function))
+#endif
 
 #ifdef CONFIG_X86_32
 #define asmlinkage CPP_ASMLINKAGE __attribute__((regparm(0)))
