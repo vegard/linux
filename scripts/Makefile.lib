@@ -151,6 +151,11 @@ c_flags        = -Wp,-MD,$(depfile) $(NOSTDINC_FLAGS) $(LINUXINCLUDE)     \
 		 $(__c_flags) $(modkern_cflags)                           \
 		 -D"KBUILD_STR(s)=\#s" $(basename_flags) $(modname_flags)
 
+# TODO
+cxx_flags = -Wp,-MD,$(depfile) $(NOSTDINC_FLAGS) $(LINUXINCLUDE)          \
+		 $(KBUILD_CPPFLAGS) $(KBUILD_CXXFLAGS)                    \
+		 -D"KBUILD_STR(s)=\#s" $(basename_flags) $(modname_flags)
+
 a_flags        = -Wp,-MD,$(depfile) $(NOSTDINC_FLAGS) $(LINUXINCLUDE)     \
 		 $(__a_flags) $(modkern_aflags)
 
