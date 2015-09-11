@@ -36,6 +36,8 @@ config BROKEN_ON_SMP
 	depends on BROKEN || !SMP
 	default y
 
+source "kernel/Kconfig.cpp"
+
 config INIT_ENV_ARG_LIMIT
 	int
 	default 32 if !UML
