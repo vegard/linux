@@ -295,6 +295,9 @@ endef
 $(obj)/%.o: $(src)/%.cpp $(recordmcount_source) FORCE
 	$(call if_changed_rule,cc_o_cpp)
 
+$(obj)/%.o: $(src)/%.cc $(recordmcount_source) FORCE
+	$(call if_changed_rule,cc_o_cpp)
+
 # TODO: Can't have single-part C++ modules yet
 
 # Compile assembler sources (.S)
