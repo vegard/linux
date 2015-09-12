@@ -8,6 +8,12 @@
 #define typeof __typeof__
 #endif
 
+#ifdef __cplusplus
+#define cpp_protect(x) x##_
+#else
+#define cpp_protect(x) x
+#endif
+
 
 #ifdef __CHECKER__
 # define __user		__attribute__((noderef, address_space(1)))
