@@ -1,0 +1,4 @@
+config CPP
+	bool "C++ runtime support"
+	help
+	  This enables C++ runtime support.
