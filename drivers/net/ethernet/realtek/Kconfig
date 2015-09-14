@@ -54,6 +54,19 @@ config 8139TOO
 	  To compile this driver as a module, choose M here: the module
 	  will be called 8139too.  This is recommended.
 
+config 8139TOO_CPP
+	tristate "RealTek RTL-8129/8130/8139 PCI Fast Ethernet Adapter support (C++)"
+	depends on CPP
+	depends on PCI
+	select CRC32
+	select MII
+	---help---
+	  This is a driver for the Fast Ethernet PCI network cards based on
+	  the RTL 8129/8130/8139 chips. If you have one of those, say Y here.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called 8139too_cpp.  This is recommended.
+
 config 8139TOO_PIO
 	bool "Use PIO instead of MMIO"
 	default y
