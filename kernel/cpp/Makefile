@@ -15,7 +15,7 @@ obj-$(CONFIG_X86_64) += $(patsubst $(src)/%.S,%.o,$(wildcard $(src)/libunwind/sr
 obj-$(CONFIG_X86_64) += $(addprefix libunwind/src/x86_64/,is_fpreg.o regname.o)
 
 ccflags-y := -I$(src)/libunwind/include/ -I$(src)/libunwind/include/tdep/ -I$(src)/libunwind/src/
-#ccflags-y += -DDEBUG
+ccflags-$(CONFIG_CPP_LIBUNWIND_DEBUG) += -DDEBUG
 ccflags-y += -DUNW_LOCAL_ONLY
 ccflags-y += -DPACKAGE_STRING=\"libunwind-linux-kernel\"
 ccflags-y += -DPACKAGE_BUGREPORT=\"vegard.nossum@oracle.com\"

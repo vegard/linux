@@ -1,4 +1,13 @@
-config CPP
+menuconfig CPP
 	bool "C++ runtime support"
 	help
 	  This enables C++ runtime support.
+
+if CPP
+
+config CPP_LIBUNWIND_DEBUG
+	bool "libunwind debugging"
+	help
+	  This enables detailed libunwind debug output in the kernel log.
+
+endif # CPP
