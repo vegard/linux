@@ -39,6 +39,16 @@ ifdef CONFIG_X86_NEED_RELOCS
         LDFLAGS_vmlinux := --emit-relocs
 endif
 
+# We pass --eh-frame-hdr to the linker in order to have it generate
+# the .eh_frame_hdr section from the .eh_frame section(s) as described
+# here: http://www.airs.com/blog/archives/462
+#
+# The .eh_frame_hdr section is used by libunwind when handling C++
+# exceptions.
+ifdef CONFIG_CPP
+        LDFLAGS_vmlinux += --eh-frame-hdr
+endif
+
 #
 # Prevent GCC from generating any FP code by mistake.
 #

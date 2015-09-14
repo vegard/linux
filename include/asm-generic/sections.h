@@ -36,6 +36,11 @@ extern char __kprobes_text_start[], __kprobes_text_end[];
 extern char __entry_text_start[], __entry_text_end[];
 extern char __start_rodata[], __end_rodata[];
 
+#ifdef CONFIG_CPP
+/* DWARF debugging information used for C++ stack unwinding/exception handling */
+extern char __eh_frame_hdr_start[], __eh_frame_hdr_end[];
+#endif
+
 /* Start and end of .ctors section - used for constructor calls. */
 extern char __ctors_start[], __ctors_end[];
 

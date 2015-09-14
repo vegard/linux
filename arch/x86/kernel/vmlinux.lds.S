@@ -77,6 +77,10 @@ PHDRS {
 	init PT_LOAD FLAGS(7);          /* RWE */
 #endif
 	note PT_NOTE FLAGS(0);          /* ___ */
+
+#ifdef CONFIG_CPP
+	eh_frame_hdr PT_GNU_EH_FRAME;
+#endif
 }
 
 SECTIONS
@@ -307,6 +311,15 @@ SECTIONS
 	}
 #endif
 
+#ifdef CONFIG_CPP
+	. = ALIGN(PAGE_SIZE);
+	__eh_frame_hdr_start = .;
+	.eh_frame_hdr : AT(ADDR(.eh_frame_hdr) - LOAD_OFFSET) {
+		*(.eh_frame_hdr)
+	} :text :eh_frame_hdr
+	__eh_frame_hdr_end = .;
+#endif
+
 	/* BSS */
 	. = ALIGN(PAGE_SIZE);
 	.bss : AT(ADDR(.bss) - LOAD_OFFSET) {
@@ -332,7 +345,9 @@ SECTIONS
 
 	/* Sections to be discarded */
 	DISCARDS
+#ifndef CONFIG_CPP
 	/DISCARD/ : { *(.eh_frame) }
+#endif
 }
 
 
