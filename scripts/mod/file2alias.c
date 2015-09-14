@@ -41,6 +41,7 @@ typedef struct {
 /* Big exception to the "don't include kernel headers into userspace, which
  * even potentially has different endianness and word sizes, since
  * we handle those differences explicitly below */
+#define cpp_protect(x) x
 #include "../../include/linux/mod_devicetable.h"
 
 /* This array collects all instances that use the generic do_table */
