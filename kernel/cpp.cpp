@@ -1,7 +1,7 @@
-extern "C" {
+#include <linux/cpp/PROTECT.h>
 #include <linux/init.h>
 #include <linux/printk.h>
-}
+#include <linux/cpp/PROTECT.h>
 
 #include <linux/cpp/spinlock.h>
 
