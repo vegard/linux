@@ -45,7 +45,7 @@
 #include <linux/stringify.h>
 
 #ifdef CONFIG_SMP
-#define __percpu_prefix		"%%"__stringify(__percpu_seg)":"
+#define __percpu_prefix		"%%" __stringify(__percpu_seg)":"
 #define __my_cpu_offset		this_cpu_read(this_cpu_off)
 
 /*
