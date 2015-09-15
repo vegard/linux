@@ -1,9 +1,9 @@
 #ifndef __LINUX_CPP_SPINLOCK_H
 #define __LINUX_CPP_SPINLOCK_H
 
-extern "C" {
+#include <linux/cpp/PROTECT.h>
 #include <linux/spinlock.h>
-}
+#include <linux/cpp/PROTECT.h>
 
 class Spinlock {
 public:
