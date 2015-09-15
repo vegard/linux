@@ -95,6 +95,7 @@
 #define DRV_VERSION	"0.9.28"
 
 
+#include <linux/cpp/PROTECT.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/compiler.h>
@@ -114,6 +115,7 @@
 #include <linux/gfp.h>
 #include <linux/if_vlan.h>
 #include <asm/irq.h>
+#include <linux/cpp/PROTECT.h>
 
 #define RTL8139_DRIVER_NAME   DRV_NAME " Fast Ethernet driver " DRV_VERSION
 
