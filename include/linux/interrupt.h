@@ -7,6 +7,7 @@
 #include <linux/bitops.h>
 #include <linux/preempt.h>
 #include <linux/cpumask.h>
+#include <linux/irqchip.h>
 #include <linux/irqreturn.h>
 #include <linux/irqnr.h>
 #include <linux/hardirq.h>
@@ -360,16 +361,6 @@ static inline int disable_irq_wake(unsigned int irq)
 {
 	return irq_set_irq_wake(irq, 0);
 }
-
-/*
- * irq_get_irqchip_state/irq_set_irqchip_state specific flags
- */
-enum irqchip_irq_state {
-	IRQCHIP_STATE_PENDING,		/* Is interrupt pending? */
-	IRQCHIP_STATE_ACTIVE,		/* Is interrupt in progress? */
-	IRQCHIP_STATE_MASKED,		/* Is interrupt masked? */
-	IRQCHIP_STATE_LINE_LEVEL,	/* Is IRQ line high? */
-};
 
 extern int irq_get_irqchip_state(unsigned int irq, enum irqchip_irq_state which,
 				 bool *state);
