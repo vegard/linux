@@ -43,6 +43,8 @@ def fix_extern_asmlinkage():
     paths = [
         'arch/x86/include/asm/processor.h',
         'arch/x86/include/asm/special_insns.h',
+        'arch/x86/include/asm/hw_irq.h',
+
         'include/linux/printk.h',
         'include/linux/sched.h',
     ]
@@ -123,10 +125,10 @@ def fix_user_defined_literals():
     for macro, paths in macros.iteritems():
         replace(paths, '"' + macro, lambda *args: '" ' + macro)
 
-#fix_extern_asmlinkage()
-#fix_keywords()
-#fix_user_defined_literals()
+fix_extern_asmlinkage()
+fix_user_defined_literals()
 
+#fix_keywords()
 #fix_keyword(['include/linux/sysfs.h'], 'private')
 #fix_keyword(['include/linux/kobject.h'], 'namespace')
 #fix_keyword(['include/linux/mod_devicetable.h'], 'class')
@@ -134,10 +136,8 @@ def fix_user_defined_literals():
 #fix_keyword(['include/linux/device.h'], 'namespace')
 #fix_keyword(['include/linux/pci.h'], 'class')
 #fix_keyword(['include/linux/mm.h'], 'new')
-
-#replace(['arch/x86/include/asm/hw_irq.h'], r'extern asmlinkage', lambda *args: 'extern_asmlinkage')
 #fix_keyword(['include/linux/irq.h'], 'new')
 #fix_keyword(['include/linux/irqdesc.h'], 'class')
 #fix_keyword(['include/linux/irq.h'], 'private')
 #fix_keyword(['include/linux/uio.h'], 'new')
-fix_keyword(['include/linux/dmaengine.h'], 'private')
+#fix_keyword(['include/linux/dmaengine.h'], 'private')
