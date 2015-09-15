@@ -24,7 +24,9 @@
 #define __CXXABI_H_
 
 #ifdef __KERNEL__
+#include <linux/cpp/PROTECT.h>
 #include <linux/types.h>
+#include <linux/cpp/PROTECT.h>
 #else
 #include <stddef.h>
 #include <stdint.h>

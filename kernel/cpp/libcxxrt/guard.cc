@@ -41,11 +41,11 @@
  * initialised.  
  */
 #ifdef __KERNEL__
-extern "C" {
+#include <linux/cpp/PROTECT.h>
 #include <linux/bug.h>
 #include <linux/sched.h>
 #include <linux/types.h>
-}
+#include <linux/cpp/PROTECT.h>
 #else
 #include <stdint.h>
 #include <stdlib.h>

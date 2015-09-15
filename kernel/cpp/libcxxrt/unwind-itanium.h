@@ -28,7 +28,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.  */
 
 /* For uint64_t */
 #ifdef __KERNEL__
+#include <linux/cpp/PROTECT.h>
 #include <linux/types.h>
+#include <linux/cpp/PROTECT.h>
 #else
 #include <stdint.h>
 #endif

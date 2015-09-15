@@ -27,10 +27,10 @@
 #include "typeinfo.h"
 
 #ifdef __KERNEL__
-extern "C" {
+#include <linux/cpp/PROTECT.h>
 #include <linux/slab.h>
 #include <linux/string.h>
-}
+#include <linux/cpp/PROTECT.h>
 #else
 #include <string.h>
 #include <stdlib.h>

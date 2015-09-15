@@ -25,9 +25,9 @@
  */
 
 #ifdef __KERNEL__
-extern "C" {
+#include <linux/cpp/PROTECT.h>
 #include <linux/kernel.h>
-}
+#include <linux/cpp/PROTECT.h>
 #else
 #include <stdlib.h>
 #endif
