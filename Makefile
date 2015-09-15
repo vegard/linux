@@ -398,7 +398,12 @@ KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -std=gnu89
 
 # TODO
-KBUILD_CXXFLAGS := -Wall -std=c++11 -fpermissive
+# -fpermissive is used to allow things like implicit pointer conversions
+# from/to 'void *'.
+#
+# -fno-operator-names is used to allow C++ keywords like new or private as
+# argument names in preprocessor macros.
+KBUILD_CXXFLAGS := -Wall -std=c++11 -fpermissive -fno-operator-names
 
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
