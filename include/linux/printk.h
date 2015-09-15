@@ -115,7 +115,7 @@ int no_printk(const char *fmt, ...)
 }
 
 #ifdef CONFIG_EARLY_PRINTK
-extern asmlinkage __printf(1, 2)
+extern_asmlinkage __printf(1, 2)
 void early_printk(const char *fmt, ...);
 #else
 static inline __printf(1, 2) __cold
@@ -230,7 +230,7 @@ static inline void show_regs_print_info(const char *log_lvl)
 }
 #endif
 
-extern asmlinkage void dump_stack(void) __cold;
+extern_asmlinkage void dump_stack(void) __cold;
 
 #ifndef pr_fmt
 #define pr_fmt(fmt) fmt
