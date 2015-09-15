@@ -13,7 +13,7 @@ void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p,
 #ifdef CONFIG_CC_STACKPROTECTOR
 #define __switch_canary							\
 	"movl %P[task_canary](%[next]), %%ebx\n\t"			\
-	"movl %%ebx, "__percpu_arg([stack_canary])"\n\t"
+	"movl %%ebx, " __percpu_arg([stack_canary])"\n\t"
 #define __switch_canary_oparam						\
 	, [stack_canary] "=m" (stack_canary.canary)
 #define __switch_canary_iparam						\
@@ -89,7 +89,7 @@ do {									\
 #ifdef CONFIG_CC_STACKPROTECTOR
 #define __switch_canary							  \
 	"movq %P[task_canary](%%rsi),%%r8\n\t"				  \
-	"movq %%r8,"__percpu_arg([gs_canary])"\n\t"
+	"movq %%r8," __percpu_arg([gs_canary])"\n\t"
 #define __switch_canary_oparam						  \
 	, [gs_canary] "=m" (irq_stack_union.stack_canary)
 #define __switch_canary_iparam						  \
@@ -106,7 +106,7 @@ do {									\
 	     "movq %%rsp,%P[threadrsp](%[prev])\n\t" /* save RSP */	  \
 	     "movq %P[threadrsp](%[next]),%%rsp\n\t" /* restore RSP */	  \
 	     "call __switch_to\n\t"					  \
-	     "movq "__percpu_arg([current_task])",%%rsi\n\t"		  \
+	     "movq " __percpu_arg([current_task])",%%rsi\n\t"		  \
 	     __switch_canary						  \
 	     "movq %P[thread_info](%%rsi),%%r8\n\t"			  \
 	     "movq %%rax,%%rdi\n\t" 					  \
