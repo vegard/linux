@@ -31,10 +31,17 @@ struct dma_attrs {
 	unsigned long flags[__DMA_ATTRS_LONGS];
 };
 
+#ifdef __cplusplus
+#define DEFINE_DMA_ATTRS(x) 					\
+	struct dma_attrs x = {					\
+		.flags = { 0 },					\
+	}
+#else
 #define DEFINE_DMA_ATTRS(x) 					\
 	struct dma_attrs x = {					\
 		.flags = { [0 ... __DMA_ATTRS_LONGS-1] = 0 },	\
 	}
+#endif
 
 static inline void init_dma_attrs(struct dma_attrs *attrs)
 {
