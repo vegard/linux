@@ -40,12 +40,14 @@ static unsigned int nr_sat_variables;
 static unsigned int sym_y(struct symbol *sym)
 {
 	assert(sym->type == S_BOOLEAN || sym->type == S_TRISTATE);
+	assert(sym->sat_variable <= nr_sat_variables);
 	return sym->sat_variable + 0;
 }
 
 static unsigned int sym_m(struct symbol *sym)
 {
 	assert(sym->type == S_TRISTATE);
+	assert(sym->sat_variable + 1 <= nr_sat_variables);
 	return sym->sat_variable + 1;
 }
 
@@ -196,10 +198,12 @@ static void symbol_to_bool_expr(struct symbol *sym, struct bool_expr *result[2])
 		result[1] = bool_const(false);
 		return;
 	case S_BOOLEAN:
+		assert(sym->sat_variable <= nr_sat_variables);
 		result[0] = bool_var(sym->sat_variable);
 		result[1] = bool_const(false);
 		return;
 	case S_TRISTATE:
+		assert(sym->sat_variable + 1 <= nr_sat_variables);
 		result[0] = bool_var(sym->sat_variable);
 		result[1] = bool_var(sym->sat_variable + 1);
 		return;
@@ -369,6 +373,7 @@ static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_ex
 			 */
 			assert(lhs->type == S_TRISTATE);
 
+			assert(lhs->sat_variable + 1 <= nr_sat_variables);
 			result[0] = bool_dep_put(bool_var(lhs->sat_variable), bool_var(lhs->sat_variable + 1));
 			result[1] = bool_const(false);
 			return;
@@ -387,6 +392,7 @@ static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_ex
 
 		assert(e->left.sym->type == S_BOOLEAN || e->left.sym->type == S_TRISTATE);
 
+		assert(e->left.sym->sat_variable <= nr_sat_variables);
 		result[0] = bool_var(e->left.sym->sat_variable);
 		/* XXX: hould this be true or false? It used to be false, but
 		 * in the case of "select <symbol>" we want these result[]
@@ -560,12 +566,14 @@ static bool build_choice_clauses(struct symbol *sym)
 	prompt = sym_get_prompt(sym);
 	assert(prompt);
 
+	assert(prompt->sat_variable <= nr_sat_variables);
 	visible = bool_var(prompt->sat_variable);
 
 	/* If the symbol is not optional, then it must be enabled */
 	if (!sym_is_optional(sym)) {
 		struct bool_expr *t1, *t2;
 
+		assert(sym->sat_variable <= nr_sat_variables);
 		t1 = bool_var(sym->sat_variable);
 		t2 = bool_dep(visible, t1);
 		bool_put(t1);
@@ -592,6 +600,7 @@ static bool build_choice_clauses(struct symbol *sym)
 			expr_list_for_each_sym(prop->expr, expr, choice) {
 				struct bool_expr *t1, *t2;
 
+				assert(choice->sat_variable <= nr_sat_variables);
 				t1 = bool_var(choice->sat_variable);
 				t2 = bool_or_put(block, t1);
 				block = t2;
@@ -609,8 +618,10 @@ static bool build_choice_clauses(struct symbol *sym)
 			expr_list_for_each_sym(prop->expr, expr, choice) {
 				struct property *prompt;
 
-				for_all_prompts(choice, prompt)
+				for_all_prompts(choice, prompt) {
+					assert(prompt->sat_variable <= nr_sat_variables);
 					any_visible = bool_or_put(any_visible, bool_var(prompt->sat_variable));
+				}
 			}
 		}
 
@@ -631,6 +642,7 @@ static bool build_choice_clauses(struct symbol *sym)
 			struct expr *expr2;
 			struct symbol *choice2;
 
+			assert(choice->sat_variable <= nr_sat_variables);
 			t1 = bool_var(choice->sat_variable);
 			t2 = bool_not_put(t1);
 
@@ -641,6 +653,7 @@ static bool build_choice_clauses(struct symbol *sym)
 				if (expr <= expr2)
 					continue;
 
+				assert(choice2->sat_variable <= nr_sat_variables);
 				t3 = bool_var(choice2->sat_variable);
 				t4 = bool_not_put(t3);
 
@@ -690,6 +703,7 @@ static bool build_choice_clauses(struct symbol *sym)
 		bool_put(e[0]);
 		bool_put(e[1]);
 
+		assert(prop->sat_variable <= nr_sat_variables);
 		t2 = bool_var(prop->sat_variable);
 		t3 = bool_dep(t1, t2);
 		bool_put(t1);
@@ -723,6 +737,8 @@ static bool build_tristate_clauses(struct symbol *sym)
 {
 	struct bool_expr *t1, *t2, *t3, *t4;
 
+	assert(sym->sat_variable + 1 <= nr_sat_variables);
+	assert(modules_sym->sat_variable <= nr_sat_variables);
 	t1 = bool_var(sym->sat_variable);
 	t2 = bool_var(sym->sat_variable + 1);
 	t3 = bool_var(modules_sym->sat_variable);
@@ -763,6 +779,7 @@ static bool build_prompt_visibility_clauses(struct property *prop)
 	/* Prompts are visible if and only if
 	 *  - the menu is visible ("depends on", etc.)
 	 *  - the prompt's dependencies are satisfied (the "if" part) */
+	assert(prop->sat_variable <= nr_sat_variables);
 	t1 = bool_var(prop->sat_variable);
 	t2 = bool_eq(t1, e[0]);
 	bool_put(t1);
@@ -801,10 +818,13 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 		assert(prop->expr->type == E_SYMBOL);
 		struct symbol *selected_sym = prop->expr->left.sym;
 		/* XXX: And for other symbols? */
-		if (selected_sym->type == S_BOOLEAN || selected_sym->type == S_TRISTATE)
+		if (selected_sym->type == S_BOOLEAN || selected_sym->type == S_TRISTATE) {
+			assert(sym->sat_variable <= nr_sat_variables);
 			selected_sym->selected_expr = bool_or_put(selected_sym->selected_expr, bool_var(sym->sat_variable));
+		}
 	}
 
+	assert(sym->sat_variable <= nr_sat_variables);
 	t2 = bool_and_put(bool_var(sym->sat_variable), condition[0]);
 	bool_put(condition[1]);
 
@@ -847,8 +867,10 @@ static bool build_default_clauses(struct symbol *sym)
 	symbol_to_bool_expr(sym, sym_expr);
 
 	cond = bool_or_put(bool_var(sym_assumed(sym)), bool_var(sym_selected(sym)));
-	for_all_prompts(sym, prop)
+	for_all_prompts(sym, prop) {
+		assert(prop->sat_variable <= nr_sat_variables);
 		cond = bool_or_put(cond, bool_var(prop->sat_variable));
+	}
 
 	cond = bool_not_put(cond);
 
@@ -877,6 +899,7 @@ static bool build_default_clauses(struct symbol *sym)
 		bool_put(e[0]);
 		bool_put(e[1]);
 
+		assert(prop->sat_variable <= nr_sat_variables);
 		t2 = bool_var(prop->sat_variable);
 		t3 = bool_dep(t1, t2);
 		bool_put(t1);
@@ -973,8 +996,10 @@ static bool build_clauses(void)
 		/* If a symbol is entered by the user, at least one of its
 		 * prompts must be visible. */
 		struct bool_expr *cond = bool_const(false);
-		for_all_prompts(sym, prop)
+		for_all_prompts(sym, prop) {
+			assert(prop->sat_variable <= nr_sat_variables);
 			cond = bool_or_put(cond, bool_var(prop->sat_variable));
+		}
 
 		struct bool_expr *dep = bool_dep_put(bool_var(sym_assumed(sym)), cond);
 		add_clauses(dep, "%s has at least one prompt if entered by the user", sym->name);
