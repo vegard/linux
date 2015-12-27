@@ -98,33 +98,6 @@ static void bool_put(struct bool_expr *e)
 	}
 }
 
-static bool bool_equal(struct bool_expr *a, struct bool_expr *b)
-{
-	if (a == b)
-		return true;
-
-	if (a->op != b->op)
-		return false;
-
-	switch (a->op) {
-	case CONST:
-		return a->nullary == b->nullary;
-
-	case LITERAL:
-		return a->literal == b->literal;
-
-	case NOT:
-		return bool_equal(a->unary, b->unary);
-
-	case AND:
-	case OR:
-	case EQ:
-		return bool_equal(a->binary.a, b->binary.a) && bool_equal(a->binary.b, b->binary.b);
-	default:
-		assert(false);
-	}
-}
-
 static struct bool_expr *bool_and(struct bool_expr *a, struct bool_expr *b);
 static struct bool_expr *bool_or(struct bool_expr *a, struct bool_expr *b);
 
@@ -264,15 +237,6 @@ static struct bool_expr *bool_eq_put(struct bool_expr *a, struct bool_expr *b)
 	return ret;
 }
 
-static struct bool_expr *bool_xor(struct bool_expr *a, struct bool_expr *b)
-{
-	struct bool_expr *t = bool_eq(a, b);
-	struct bool_expr *ret = bool_not(t);
-
-	bool_put(t);
-	return ret;
-}
-
 static void bool_fprint(FILE *out, struct bool_expr *e)
 {
 	assert(e);
@@ -285,8 +249,9 @@ static void bool_fprint(FILE *out, struct bool_expr *e)
 		fprintf(out, "%d", e->literal);
 		break;
 	case NOT:
-		fprintf(out, "!");
+		fprintf(out, "!(");
 		bool_fprint(out, e->unary);
+		fprintf(out, ")");
 		break;
 	case AND:
 		fprintf(out, "(");
