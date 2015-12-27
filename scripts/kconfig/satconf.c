@@ -1106,7 +1106,7 @@ int main(int argc, char *argv[])
 	 * picosat_inc_max_var() takes care of it. */
 	picosat_adjust(1 + nr_sat_variables);
 
-	/* Create a boolean variable that we force to be false */
+	/* Create a boolean variable that we force to be true */
 	bool_true = bool_var(picosat_inc_max_var());
 	add_clause("true", 1, bool_true->literal);
 
