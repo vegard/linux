@@ -158,7 +158,7 @@ static void assign_sat_variables(void)
 		}
 	}
 
-	assert(default_variable = nr_default_variables);
+	assert(default_variable == nr_default_variables);
 
 	assert(symbol_variable + prompt_variable + default_variable == nr_sat_variables);
 	assert(variable == nr_sat_variables + 1);
