@@ -878,7 +878,7 @@ static bool build_default_clauses(struct symbol *sym)
 
 	for_all_defaults(sym, prop) {
 		struct bool_expr *e[2];
-		struct bool_expr *t1, *t2, *t3, *t4, *t5, *t6, *t7, *t8, *t9;
+		struct bool_expr *t1, *t2, *t3, *t4, *t5, *t6;
 		struct gstr str1, str2;
 
 		/* XXX: This should be the "if" part of the expression. However,
@@ -889,24 +889,20 @@ static bool build_default_clauses(struct symbol *sym)
 		 * that if the Kconfig has "default n if y" (which happens),
 		 * then this means "default n", noth "default n if <SYM>=y". */
 		if (prop->visible.expr) {
-			expr_to_bool_expr(sym, prop->visible.expr, e);
+			expr_to_bool_expr(NULL, prop->visible.expr, e);
 		} else {
+			/* Defaults without a visibility condition
+			 * ("default ... if ...") default to visible. */
 			e[0] = bool_const(true);
 			e[1] = bool_const(false);
 		}
 
 		t1 = bool_and(cond, e[0]);
+		t2 = bool_not(e[0]);
 		bool_put(e[0]);
 		bool_put(e[1]);
 
-		assert(prop->sat_variable <= nr_sat_variables);
-		t2 = bool_var(prop->sat_variable);
-		t3 = bool_dep(t1, t2);
-		bool_put(t1);
-
-		t4 = bool_not(t2);
-
-		cond = bool_and_put(cond, t4);
+		cond = bool_and_put(cond, t2);
 
 		/* We pass NULL here, because we don't want "default m" to be
 		 * interpreted as FOO = (FOO = m) when we have config FOO
@@ -914,20 +910,19 @@ static bool build_default_clauses(struct symbol *sym)
 		expr_to_bool_expr(NULL, prop->expr, e);
 
 		/* XXX: We may get trouble with MODULES=n and "default m" */
-		t5 = bool_eq(sym_expr[0], e[0]);
-		t6 = bool_eq(sym_expr[1], e[1]);
+		t3 = bool_eq(sym_expr[0], e[0]);
+		t4 = bool_eq(sym_expr[1], e[1]);
 		bool_put(e[0]);
 		bool_put(e[1]);
-		t7 = bool_and_put(t5, t6);
-		t8 = bool_dep_put(t2, t7);
-		t9 = bool_and_put(t3, t8);
+		t5 = bool_and_put(t3, t4);
+		t6 = bool_dep_put(t1, t5);
 
 		str1 = str_new();
 		expr_gstr_print(prop->expr, &str1);
 		str2 = str_new();
 		expr_gstr_print(prop->visible.expr, &str2);
-		add_clauses(t9, "%s default %s if %s", sym->name, str_get(&str1), str_get(&str2));
-		bool_put(t9);
+		add_clauses(t6, "%s default %s if %s", sym->name, str_get(&str1), str_get(&str2));
+		bool_put(t6);
 		str_free(&str1);
 		str_free(&str2);
 	}
