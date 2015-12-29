@@ -537,10 +537,16 @@ static void add_clauses(struct bool_expr *e, const char *fmt, ...)
 
 	va_list ap;
 	char *name;
+	int ret;
 
 	va_start(ap, fmt);
-	vasprintf(&name, fmt, ap);
+	ret = vasprintf(&name, fmt, ap);
 	va_end(ap);
+
+	if (ret == -1) {
+		fprintf(stderr, "error: out of memory\n");
+		exit(1);
+	}
 
 #if CONFIG_DEBUG
 	fprintf(stderr, "%s: ", name);
