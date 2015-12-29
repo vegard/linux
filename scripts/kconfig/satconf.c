@@ -817,6 +817,10 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 
 	expr_to_bool_expr(sym, prop->expr, e);
 
+	assert(sym->sat_variable <= nr_sat_variables);
+	t2 = bool_and_put(bool_var(sym->sat_variable), condition[0]);
+	bool_put(condition[1]);
+
 	/* Update the selected symbol's 'selected_expr' to reflect that this
 	 * symbol may have selected it. */
 	{
@@ -826,13 +830,9 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 		/* XXX: And for other symbols? */
 		if (selected_sym->type == S_BOOLEAN || selected_sym->type == S_TRISTATE) {
 			assert(sym->sat_variable <= nr_sat_variables);
-			selected_sym->selected_expr = bool_or_put(selected_sym->selected_expr, bool_var(sym->sat_variable));
+			selected_sym->selected_expr = bool_or_put(selected_sym->selected_expr, bool_get(t2));
 		}
 	}
-
-	assert(sym->sat_variable <= nr_sat_variables);
-	t2 = bool_and_put(bool_var(sym->sat_variable), condition[0]);
-	bool_put(condition[1]);
 
 	t3 = bool_and_put(e[0], e[1]);
 	t4 = bool_dep_put(t2, t3);
