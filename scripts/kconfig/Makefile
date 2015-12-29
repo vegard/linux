@@ -233,7 +233,9 @@ HOSTLOADLIBES_nconf	= $(shell \
 				|| pkg-config --libs menu panel ncurses 2>/dev/null \
 				|| echo "-lmenu -lpanel -lncurses"  )
 
-HOSTCFLAGS_picosat.o	= -DTRACE
+# Silence some warnings in picosat (imported code)
+HOSTCFLAGS_satconf.o	= -Wno-strict-prototypes
+HOSTCFLAGS_picosat.o	= -Wno-strict-prototypes -Wno-missing-prototypes -Wno-unused-but-set-variable -DTRACE
 
 $(obj)/qconf.o: $(obj)/.tmp_qtcheck
 
