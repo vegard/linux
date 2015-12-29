@@ -1250,7 +1250,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	if (conf_write(".config")) {
+	if (conf_write(NULL)) {
 		fprintf(stderr, "error: writing .config\n");
 		exit(EXIT_FAILURE);
 	}
