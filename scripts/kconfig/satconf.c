@@ -1062,7 +1062,11 @@ int main(int argc, char *argv[])
 		picosat_set_global_default_phase(0);
 	}
 
-	conf_parse(argv[optind]);
+	conf_parse(argv[optind++]);
+
+	const char *satconfig_file = ".satconfig";
+	if (optind < argc)
+		satconfig_file = argv[optind++];
 
 	/* XXX: We need this to initialise values for non-boolean (and non-
 	 * tristate) variables. This should go away when we read .satconfig
@@ -1072,8 +1076,8 @@ int main(int argc, char *argv[])
 	 * configuration with the corresponding values from .satconfig,
 	 * because S_DEF_USER influences the operation of the main kconfig
 	 * machinery. */
-	conf_read_simple(".satconfig", S_DEF_USER);
-	conf_read_simple(".satconfig", S_DEF_SAT);
+	conf_read_simple(satconfig_file, S_DEF_USER);
+	conf_read_simple(satconfig_file, S_DEF_SAT);
 
 	{
 		/* We need to do this in order to give strings from the
