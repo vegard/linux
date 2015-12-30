@@ -690,13 +690,19 @@ static bool build_choice_clauses(struct symbol *sym)
 	struct bool_expr *cond = bool_const(false);
 
 	/* Choice block defaults only apply if none of the choices were
-	 * selected. */
+	 * visible or selected. */
 	for_all_choices(sym, prop) {
 		struct expr *expr;
 		struct symbol *choice;
 
 		expr_list_for_each_sym(prop->expr, expr, choice) {
+			struct property *prompt;
+
 			cond = bool_or_put(cond, bool_var(sym_selected(choice)));
+			for_all_prompts(choice, prompt) {
+				assert(prompt->sat_variable <= nr_sat_variables);
+				cond = bool_or_put(cond, bool_var(prompt->sat_variable));
+			}
 		}
 	}
 
