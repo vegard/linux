@@ -1,0 +1,22 @@
+config MODULES
+  bool "Enable loadable module support"
+  option modules
+
+config ARCH_SUPPORTS_DEBUG_PAGEALLOC
+  def_bool y
+
+config PAGE_POISONING
+  bool
+
+config DEBUG_PAGEALLOC
+  bool "Debug page memory allocations"
+  select PAGE_POISONING if !ARCH_SUPPORTS_DEBUG_PAGEALLOC
+
+===testcases
+
+---
+input:
+  DEBUG_PAGEALLOC: y
+output:
+  PAGE_POISONING: n
+...
