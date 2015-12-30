@@ -229,15 +229,11 @@ static void or_expr_to_bool_expr(struct symbol *lhs,
 	expr_to_bool_expr(lhs, in_a, a);
 	expr_to_bool_expr(lhs, in_b, b);
 
-	t1 = bool_or(a[0], a[1]);
-	t2 = bool_or(b[0], b[1]);
+	out[0] = bool_or(a[0], b[0]);
 
-	out[0] = bool_or_put(t1, t2);
-
-	t1 = bool_and(a[1], b[1]);
-	t2 = bool_dep(b[0], b[1]);
-	t3 = bool_dep(a[0], b[1]);
-	out[1] = bool_and_put(t1, bool_and_put(t2, t3));
+	t2 = bool_dep(a[0], a[1]);
+	t3 = bool_dep(b[0], b[1]);
+	out[1] = bool_and_put(bool_get(out[0]), bool_and_put(t2, t3));
 
 	bool_put(a[0]);
 	bool_put(a[1]);
