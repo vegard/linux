@@ -1,0 +1,19 @@
+config MODULES
+  bool "Enable loadable module support"
+  option modules
+
+config JBD2
+  tristate
+
+config EXT4_FS
+  tristate "The Extended 4 (ext4) filesystem"
+  select JBD2
+
+===testcases
+
+---
+input:
+  EXT4_FS: y
+output:
+  JBD2: y
+...
