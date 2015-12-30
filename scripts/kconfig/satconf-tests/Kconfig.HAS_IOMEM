@@ -1,0 +1,37 @@
+# According to menuconfig, the only possible assignment is y to both.
+# Neither symbol has any prompt, so the defaults are used. But selects
+# override defaults, so HAS_IOMEM's select of GENERIC_IO causes both
+# symbols to get a final value of y.
+
+config MODULES
+  bool "Enable loadable module support"
+  option modules
+
+config GENERIC_IO
+	boolean
+	default n
+
+config HAS_IOMEM
+	boolean
+	select GENERIC_IO
+	default y
+
+===testcases
+
+---
+output:
+ GENERIC_IO: y
+ HAS_IOMEM: y
+...
+
+---
+input:
+ GENERIC_IO: n
+failure: true
+...
+
+---
+input:
+ HAS_IOMEM: n
+failure: true
+...

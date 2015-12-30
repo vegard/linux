@@ -1,0 +1,34 @@
+config MODULES
+  bool "Enable loadable module support"
+  option modules
+
+choice
+	prompt "Preemption Model"
+	default PREEMPT_NONE
+
+config PREEMPT_NONE
+	bool "No Forced Preemption (Server)"
+
+config PREEMPT_VOLUNTARY
+	bool "Voluntary Kernel Preemption (Desktop)"
+
+config PREEMPT
+	bool "Preemptible Kernel (Low-Latency Desktop)"
+
+endchoice
+
+===testcases
+
+# We force the default off. This should not generate a conflict, but
+# choose a different choice.
+---
+input:
+  PREEMPT_NONE: n
+...
+
+# We force another choice than the default. This should not generate a
+# conflict, but use the value we forced.
+---
+input:
+  PREEMPT_VOLUNTARY: y
+...

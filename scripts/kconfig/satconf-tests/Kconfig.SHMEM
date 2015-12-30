@@ -1,0 +1,37 @@
+config MODULES
+  bool "Enable loadable module support"
+  option modules
+
+config MMU
+	def_bool y
+
+menuconfig EXPERT
+	bool "Configure standard kernel features (expert users)"
+
+config SHMEM
+	bool "Use full shmem filesystem" if EXPERT
+	default y
+	depends on MMU
+
+config TMPFS
+	bool "Tmpfs virtual memory file system support (former shm fs)"
+	depends on SHMEM
+
+===testcases
+
+---
+input:
+  EXPERT: n
+  TMPFS: y
+output:
+  SHMEM: y
+...
+
+# Without a prompt for SHMEM, it should use the default value of 'y'
+---
+input:
+  EXPERT: n
+  TMPFS: n
+output:
+  SHMEM: y
+...
