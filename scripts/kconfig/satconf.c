@@ -963,6 +963,32 @@ static bool build_default_clauses(struct symbol *sym)
 	return true;
 }
 
+static void build_symbol_clauses(struct symbol *sym)
+{
+	/* A symbol can only be enabled (true) if:
+	 *  - a prompt was visible (and this prompt was selected),
+	 *  - a default value was used
+	 *  - it was selected
+	 */
+
+	struct bool_expr *cond = bool_const(false);
+
+	struct property *prompt;
+	for_all_prompts(sym, prompt)
+		cond = bool_or_put(cond, bool_var(prompt->sat_variable));
+
+	struct property *prop;
+	for_all_defaults(sym, prop)
+		cond = bool_or_put(cond, bool_var(prop->sat_variable));
+
+	cond = bool_or_put(cond, bool_var(sym_selected(sym)));
+
+	struct bool_expr *t1 = bool_dep_put(bool_var(sym_y(sym)), cond);
+	add_clauses(t1, "%s must have a prompt, a default, or be selected",
+		sym->name ?: "<choice>");
+	bool_put(t1);
+}
+
 static bool build_clauses(void)
 {
 	unsigned int i;
@@ -1004,6 +1030,8 @@ static bool build_clauses(void)
 
 		if (!build_sym_select_clauses(sym))
 			return false;
+
+		build_symbol_clauses(sym);
 	}
 
 	for_all_symbols(i, sym) {
