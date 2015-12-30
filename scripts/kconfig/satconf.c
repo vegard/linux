@@ -396,10 +396,7 @@ static void expr_to_bool_expr(struct symbol *lhs, struct expr *e, struct bool_ex
 
 		assert(e->left.sym->sat_variable <= nr_sat_variables);
 		result[0] = bool_var(e->left.sym->sat_variable);
-		/* XXX: hould this be true or false? It used to be false, but
-		 * in the case of "select <symbol>" we want these result[]
-		 * variables to be the consequences of selecting the symbol. */
-		result[1] = bool_const(true);
+		result[1] = bool_const(false);
 		return;
 	case E_RANGE:
 		break;
@@ -826,8 +823,6 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 		condition[1] = bool_const(false);
 	}
 
-	expr_to_bool_expr(sym, prop->expr, e);
-
 	assert(sym->sat_variable <= nr_sat_variables);
 	t2 = bool_and_put(bool_var(sym->sat_variable), condition[0]);
 	bool_put(condition[1]);
@@ -845,8 +840,9 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 		}
 	}
 
-	t3 = bool_and_put(e[0], e[1]);
-	t4 = bool_dep_put(t2, t3);
+	expr_to_bool_expr(sym, prop->expr, e);
+	t4 = bool_dep_put(t2, e[0]);
+	bool_put(e[1]);
 
 	str1 = str_new();
 	expr_gstr_print(prop->expr, &str1);
