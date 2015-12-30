@@ -1,0 +1,25 @@
+config MODULES
+  bool "Enable loadable module support"
+  option modules
+
+config CRYPTO_ALGAPI2
+  tristate
+
+config CRYPTO_HASH2
+  tristate
+  select CRYPTO_ALGAPI2
+
+config CRYPTO_MANAGER2
+  tristate
+  default m
+  select CRYPTO_HASH2
+
+===testcases
+
+---
+input:
+  MODULES: y
+  CRYPTO_ALGAPI2: y
+  CRYPTO_HASH2: y
+  CRYPTO_MANAGER2: m
+...
