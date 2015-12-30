@@ -784,12 +784,15 @@ static bool build_tristate_clauses(struct symbol *sym)
 static bool build_prompt_visibility_clauses(struct property *prop)
 {
 	struct bool_expr *e[2];
-	struct bool_expr *t1, *t2;
+	struct bool_expr *t1;
 	struct gstr str;
 
 	/* visible.expr is a conjunction of the menu's dependencies
 	 * (parent menus' "depends on", this menu' "depends on", and the
-	 * "if" part of the prompt). Which is exactly what we need. */
+	 * "if" part of the prompt). Which is exactly what we need.
+	 *
+	 * For choices, it is a conjunction of the choice block symbol
+	 * and the choice's "depends on". */
 	if (prop->visible.expr) {
 		expr_to_bool_expr(prop->sym, prop->visible.expr, e);
 	} else {
@@ -801,16 +804,13 @@ static bool build_prompt_visibility_clauses(struct property *prop)
 	 *  - the menu is visible ("depends on", etc.)
 	 *  - the prompt's dependencies are satisfied (the "if" part) */
 	assert(prop->sat_variable <= nr_sat_variables);
-	t1 = bool_var(prop->sat_variable);
-	t2 = bool_eq(t1, e[0]);
-	bool_put(t1);
-	bool_put(e[0]);
+	t1 = bool_eq_put(bool_var(prop->sat_variable), e[0]);
 	bool_put(e[1]);
 
 	str = str_new();
 	expr_gstr_print(prop->visible.expr, &str);
-	add_clauses(t2, "\"%s\" prompt depends on %s", prop->text, str_get(&str));
-	bool_put(t2);
+	add_clauses(t1, "\"%s\" prompt depends on %s", prop->text, str_get(&str));
+	bool_put(t1);
 	str_free(&str);
 
 	return true;
