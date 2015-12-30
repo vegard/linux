@@ -165,6 +165,12 @@ static void assign_sat_variables(void)
 	assert(symbol_variable + prompt_variable + default_variable == nr_sat_variables);
 	assert(variable == nr_sat_variables + 1);
 
+	/* Make sure CONFIG_MODULES got assigned something -- this can happen
+	 * if "option modules" was not specified on any symbol. */
+	assert(modules_sym);
+	assert(modules_sym->sat_variable > 0);
+	assert(modules_sym->sat_variable <= nr_sat_variables);
+
 	printf("%u variables (%u symbols, %u prompts, %u defaults)\n",
 		nr_sat_variables, nr_symbol_variables, nr_prompt_variables, nr_default_variables);
 }
