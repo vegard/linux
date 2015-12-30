@@ -681,17 +681,21 @@ static bool build_choice_clauses(struct symbol *sym)
 	 * default directive doesn't specify the default value of the current
 	 * symbol, but of the choice symbol. For another, choice symbols have
 	 * only one menu. */
-	struct bool_expr *cond;
+	struct bool_expr *cond = bool_const(false);
 
-	{
-		struct bool_expr *t1;
+	/* Choice block defaults only apply if none of the choices were
+	 * assumed or selected. */
+	for_all_choices(sym, prop) {
+		struct expr *expr;
+		struct symbol *choice;
 
-		/* XXX: Choice block variables can _never_ be assumed since
-		 * they are anonymous... Yikes, I think we need to do something
-		 * like (any of the choices were forced). */
-		t1 = bool_var(sym_assumed(sym));
-		cond = bool_not_put(t1);
+		expr_list_for_each_sym(prop->expr, expr, choice) {
+			cond = bool_or_put(cond, bool_var(sym_assumed(choice)));
+			cond = bool_or_put(cond, bool_var(sym_selected(choice)));
+		}
 	}
+
+	cond = bool_not_put(cond);
 
 	for_all_defaults(sym, prop) {
 		struct bool_expr *e[2];
