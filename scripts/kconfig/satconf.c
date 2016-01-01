@@ -1158,7 +1158,7 @@ void satconfig_update_symbol(struct symbol *sym)
 	} else if (sym->flags & SYMBOL_CHOICE) {
 		assume = false;
 	} else {
-		switch (sym->curr.tri) {
+		switch (sym->def[S_DEF_SAT].tri) {
 		case no:
 			picosat_assume(-sym_y(sym));
 			break;
