@@ -1064,28 +1064,8 @@ static void check_sym_value(struct symbol *sym, tristate value)
 	}
 }
 
-int main(int argc, char *argv[])
+void satconfig_init(const char *Kconfig_file, bool randomize)
 {
-	bool randomize = false;
-
-	setlocale(LC_ALL, "");
-	bindtextdomain(PACKAGE, LOCALEDIR);
-	textdomain(PACKAGE);
-
-	int optind = 1;
-	if (!strcmp(argv[optind], "--random")) {
-		randomize = true;
-		++optind;
-	}
-
-	const char *Kconfig_file = "Kconfig";
-	if (optind < argc)
-		Kconfig_file = argv[optind++];
-
-	const char *satconfig_file = ".satconfig";
-	if (optind < argc)
-		satconfig_file = argv[optind++];
-
 	picosat_init();
 	picosat_enable_trace_generation();
 
@@ -1112,6 +1092,19 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
+	bool_put(bool_true);
+	assert(nr_bool_created == nr_bool_destroyed);
+
+	/* Annoyingly, we have to set phases before doing the first solve. */
+	if (randomize) {
+		picosat_set_seed(time(NULL));
+		picosat_set_global_default_phase(3);
+	} else {
+		picosat_set_global_default_phase(0);
+	}
+
+	picosat_set_default_phase_lit(modules_sym->sat_variable, 1);
+
 	{
 		/* Modules are preferred over built-ins; tell that to the
 		 * solver. XXX: This is rather fragile, there is a
@@ -1127,17 +1120,6 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	if (randomize) {
-		picosat_set_seed(time(NULL));
-		picosat_set_global_default_phase(3);
-	} else {
-		picosat_set_global_default_phase(0);
-	}
-
-	picosat_set_default_phase_lit(modules_sym->sat_variable, 1);
-
-	bool_put(bool_true);
-	assert(nr_bool_created == nr_bool_destroyed);
 
 	printf("%u clauses\n", picosat_added_original_clauses());
 
@@ -1161,6 +1143,31 @@ int main(int argc, char *argv[])
 			exit(EXIT_FAILURE);
 		}
 	}
+}
+
+int main(int argc, char *argv[])
+{
+	bool randomize = false;
+
+	setlocale(LC_ALL, "");
+	bindtextdomain(PACKAGE, LOCALEDIR);
+	textdomain(PACKAGE);
+
+	int optind = 1;
+	if (!strcmp(argv[optind], "--random")) {
+		randomize = true;
+		++optind;
+	}
+
+	const char *Kconfig_file = "Kconfig";
+	if (optind < argc)
+		Kconfig_file = argv[optind++];
+
+	const char *satconfig_file = ".satconfig";
+	if (optind < argc)
+		satconfig_file = argv[optind++];
+
+	satconfig_init(Kconfig_file, randomize);
 
 	/* We need to override the S_DEF_USER values from the default
 	 * configuration with the corresponding values from .satconfig,
