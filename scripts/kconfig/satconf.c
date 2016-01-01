@@ -1153,7 +1153,7 @@ void satconfig_update_symbol(struct symbol *sym)
 
 	bool assume = true;
 
-	if (!(sym->flags & (SYMBOL_DEF << S_DEF_SAT))) {
+	if (!(sym->flags & SYMBOL_SAT)) {
 		assume = false;
 	} else if (sym->flags & SYMBOL_CHOICE) {
 		assume = false;
@@ -1193,9 +1193,9 @@ void satconfig_update_all_symbols(void)
 	 * seem to make any difference for BOOL/TRISTATE
 	 * variables (we set them below anyway). */
 	for_all_symbols(i, sym) {
-		if (sym->flags & (SYMBOL_DEF << S_DEF_SAT))
+		if (sym->flags & SYMBOL_SAT)
 			sym->curr = sym->def[S_DEF_SAT];
-		else if (sym->flags & (SYMBOL_DEF << S_DEF_USER))
+		else if (sym->flags & SYMBOL_DEF_USER)
 			sym->curr = sym->def[S_DEF_USER];
 	}
 
