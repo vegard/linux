@@ -1,0 +1,30 @@
+config MODULES
+  bool "Enable loadable module support"
+  option modules
+
+config ASN1
+  tristate
+
+config CRYPTO_RSA
+  tristate "RSA algorithm"
+  select ASN1
+
+===testcases
+
+# A select from an 'm' variable should result in 'y' for the selected
+# symbol.
+---
+input:
+  CRYPTO_RSA: m
+output:
+  ASN1: y
+...
+
+# We should not be able to set ASN1=m just because it gets selected by
+# something else -- the select should onltyresult in ASN1=y.
+---
+input:
+  ASN1: m
+  CRYPTO_RSA: y
+failure: true
+...
