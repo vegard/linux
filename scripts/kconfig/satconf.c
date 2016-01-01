@@ -1066,27 +1066,30 @@ static void check_sym_value(struct symbol *sym, tristate value)
 
 int main(int argc, char *argv[])
 {
+	bool randomize = false;
+
 	setlocale(LC_ALL, "");
 	bindtextdomain(PACKAGE, LOCALEDIR);
 	textdomain(PACKAGE);
 
-	picosat_init();
-	picosat_enable_trace_generation();
-
 	int optind = 1;
 	if (!strcmp(argv[optind], "--random")) {
-		picosat_set_seed(time(NULL));
-		picosat_set_global_default_phase(3);
+		randomize = true;
 		++optind;
-	} else {
-		picosat_set_global_default_phase(0);
 	}
 
-	conf_parse(argv[optind++]);
+	const char *Kconfig_file = "Kconfig";
+	if (optind < argc)
+		Kconfig_file = argv[optind++];
 
 	const char *satconfig_file = ".satconfig";
 	if (optind < argc)
 		satconfig_file = argv[optind++];
+
+	picosat_init();
+	picosat_enable_trace_generation();
+
+	conf_parse(Kconfig_file);
 
 	/* XXX: We need this to initialise values for non-boolean (and non-
 	 * tristate) variables. This should go away when we read .satconfig
@@ -1122,6 +1125,13 @@ int main(int argc, char *argv[])
 
 			picosat_set_default_phase_lit(sym->sat_variable + 1, 1);
 		}
+	}
+
+	if (randomize) {
+		picosat_set_seed(time(NULL));
+		picosat_set_global_default_phase(3);
+	} else {
+		picosat_set_global_default_phase(0);
 	}
 
 	picosat_set_default_phase_lit(modules_sym->sat_variable, 1);
