@@ -33,6 +33,9 @@ satconfig: $(obj)/satconf
 satrandconfig: $(obj)/satconf
 	$< $(silent) --random $(Kconfig)
 
+satmenuconfig: $(obj)/satmconf
+	$< $(silent) $(Kconfig)
+
 config: $(obj)/conf
 	$< $(silent) --oldaskconfig $(Kconfig)
 
@@ -144,6 +147,7 @@ help:
 	@echo  '  gconfig	  - Update current config utilising a GTK+ based front-end'
 	@echo  '  satconfig       - New config respecting the .satconfig constraints'
 	@echo  '  satrandconfig	  - New config respecting .satconfig with random answers'
+	@echo  '  satmenuconfig	  - Edit .satconfig constraints using menuconfig-like editor'
 	@echo  '  oldconfig	  - Update current config utilising a provided .config as base'
 	@echo  '  localmodconfig  - Update current config disabling modules not loaded'
 	@echo  '  localyesconfig  - Update current config converting local mods to core'
@@ -190,12 +194,13 @@ conf-objs	:= conf.o  zconf.tab.o
 mconf-objs	:= mconf.o zconf.tab.o $(lxdialog)
 nconf-objs      := nconf.o zconf.tab.o nconf.gui.o
 satconf-objs	:= satconf.o zconf.tab.o picosat.o
+satmconf-objs	:= satmconf.o zconf.tab.o picosat.o $(lxdialog)
 kxgettext-objs	:= kxgettext.o zconf.tab.o
 qconf-cxxobjs	:= qconf.o
 qconf-objs	:= zconf.tab.o
 gconf-objs	:= gconf.o zconf.tab.o
 
-hostprogs-y := conf nconf mconf kxgettext qconf gconf satconf
+hostprogs-y := conf nconf mconf kxgettext qconf gconf satconf satmconf
 
 clean-files	:= qconf.moc .tmp_qtcheck .tmp_gtkcheck
 clean-files	+= zconf.tab.c zconf.lex.c zconf.hash.c gconf.glade.h
@@ -227,6 +232,8 @@ HOSTCFLAGS_gconf.o	= `pkg-config --cflags gtk+-2.0 gmodule-2.0 libglade-2.0` \
                           -Wno-missing-prototypes
 
 HOSTLOADLIBES_mconf   = $(shell $(CONFIG_SHELL) $(check-lxdialog) -ldflags $(HOSTCC))
+
+HOSTLOADLIBES_satmconf = $(shell $(CONFIG_SHELL) $(check-lxdialog) -ldflags $(HOSTCC))
 
 HOSTLOADLIBES_nconf	= $(shell \
 				pkg-config --libs menuw panelw ncursesw 2>/dev/null \
