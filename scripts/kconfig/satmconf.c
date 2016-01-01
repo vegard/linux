@@ -21,6 +21,7 @@
 
 #include "lkc.h"
 #include "lxdialog/dialog.h"
+#include "satconf.h"
 
 static const char mconf_readme[] = N_(
 "Overview\n"
@@ -600,7 +601,7 @@ static void build_conf(struct menu *menu)
 			goto conf_childs;
 		}
 		child_count++;
-		val = sym_get_tristate_value(sym);
+		val = sym->curr.tri;
 		sat_val = sym->def[S_DEF_SAT].tri;
 		if (sym_is_choice_value(sym) && val == yes) {
 			item_make("   ");
@@ -733,16 +734,28 @@ static void conf(struct menu *menu, struct menu *active_menu)
 			conf_load();
 			break;
 		case 5: /* y */
-			if (item_is_tag('t'))
+			if (item_is_tag('t')) {
 				sym->def[S_DEF_SAT].tri = yes;
+				sym->flags |= SYMBOL_SAT;
+				satconfig_update_symbol(sym);
+				satconfig_solve();
+			}
 			break;
 		case 6: /* n */
-			if (item_is_tag('t'))
+			if (item_is_tag('t')) {
 				sym->def[S_DEF_SAT].tri = no;
+				sym->flags |= SYMBOL_SAT;
+				satconfig_update_symbol(sym);
+				satconfig_solve();
+			}
 			break;
 		case 7: /* m */
-			if (item_is_tag('t'))
+			if (item_is_tag('t')) {
 				sym->def[S_DEF_SAT].tri = mod;
+				sym->flags |= SYMBOL_SAT;
+				satconfig_update_symbol(sym);
+				satconfig_solve();
+			}
 			break;
 		case 8: /* space */
 			if (item_is_tag('t'))
@@ -1028,8 +1041,12 @@ int main(int ac, char **av)
 		conf_set_message_callback(NULL);
 		av++;
 	}
-	conf_parse(av[1]);
+
+	satconfig_init(av[1], false);
 	conf_read_simple(".satconfig", S_DEF_SAT);
+
+	satconfig_update_all_symbols();
+	satconfig_solve();
 
 	mode = getenv("MENUCONFIG_MODE");
 	if (mode) {
