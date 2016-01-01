@@ -1145,6 +1145,130 @@ void satconfig_init(const char *Kconfig_file, bool randomize)
 	}
 }
 
+void satconfig_update_symbol(struct symbol *sym)
+{
+	if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
+		return;
+
+	bool assume = true;
+
+	if (!(sym->flags & (SYMBOL_DEF << S_DEF_SAT))) {
+		assume = false;
+	} else if (sym->flags & SYMBOL_CHOICE) {
+		assume = false;
+	} else {
+		switch (sym->curr.tri) {
+		case no:
+			picosat_assume(-sym_y(sym));
+			break;
+		case yes:
+			picosat_assume(sym_y(sym));
+			if (sym->type == S_TRISTATE)
+				picosat_assume(-sym_m(sym));
+			break;
+		case mod:
+			assert(sym->type == S_TRISTATE);
+			picosat_assume(sym_y(sym));
+			picosat_assume(sym_m(sym));
+			break;
+		}
+	}
+
+	if (assume)
+		picosat_assume(sym_assumed(sym));
+	else
+		picosat_assume(-sym_assumed(sym));
+}
+
+void satconfig_update_all_symbols(void)
+{
+	unsigned int i;
+	struct symbol *sym;
+	struct expr *e;
+
+	/* We need to do this in order to give strings from the
+	 * environment get their values in the proper place. It
+	 * is also necessary for INT/HEX values, but doesn't
+	 * seem to make any difference for BOOL/TRISTATE
+	 * variables (we set them below anyway). */
+	for_all_symbols(i, sym) {
+		if (sym->flags & (SYMBOL_DEF << S_DEF_SAT))
+			sym->curr = sym->def[S_DEF_SAT];
+		else if (sym->flags & (SYMBOL_DEF << S_DEF_USER))
+			sym->curr = sym->def[S_DEF_USER];
+	}
+
+	expr_list_for_each_sym(sym_env_list, e, sym) {
+		struct property *prop;
+		struct symbol *env_sym;
+
+		prop = sym_get_env_prop(sym);
+		env_sym = prop_get_symbol(prop);
+		if (!env_sym)
+			continue;
+
+		sym->curr.val = getenv(env_sym->name);
+	}
+
+	/* Use assumptions */
+	for_all_symbols(i, sym)
+		satconfig_update_symbol(sym);
+}
+
+void satconfig_solve(void)
+{
+	int sat = picosat_sat(-1);
+	unsigned int i;
+
+	if (sat != PICOSAT_SATISFIABLE) {
+		fprintf(stderr, "error: unsatisfiable constraints\n");
+
+		for (i = 0; i < picosat_added_original_clauses(); ++i) {
+			if (picosat_coreclause(i))
+				fprintf(stderr, "clause: %s\n", clauses[i]);
+		}
+
+		exit(EXIT_FAILURE);
+	}
+
+	struct symbol *sym;
+	for_all_symbols(i, sym) {
+		if (!sym->name)
+			continue;
+		if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
+			continue;
+
+		{
+			int y = picosat_deref(sym_y(sym));
+			assert(y != 0);
+
+			if (y == 1) {
+				if (sym->type == S_TRISTATE) {
+					int m = picosat_deref(sym_m(sym));
+					assert(m != 0);
+
+					if (m == 1)
+						sym->curr.tri = mod;
+					else if (m == -1)
+						sym->curr.tri = yes;
+				} else {
+					sym->curr.tri = yes;
+				}
+			} else if (y == -1) {
+				if (sym->type == S_TRISTATE) {
+					int m = picosat_deref(sym_m(sym));
+					assert(m == -1);
+				}
+
+				sym->curr.tri = no;
+			}
+		}
+
+		sym->flags |= SYMBOL_VALID;
+		sym->flags |= SYMBOL_WRITE;
+	}
+}
+
 int main(int argc, char *argv[])
 {
 	bool randomize = false;
@@ -1176,126 +1300,9 @@ int main(int argc, char *argv[])
 	conf_read_simple(satconfig_file, S_DEF_USER);
 	conf_read_simple(satconfig_file, S_DEF_SAT);
 
-	{
-		/* We need to do this in order to give strings from the
-		 * environment get their values in the proper place. It
-		 * is also necessary for INT/HEX values, but doesn't
-		 * seem to make any difference for BOOL/TRISTATE
-		 * variables (we set them below anyway). */
-		unsigned int i;
-		struct symbol *sym;
-		for_all_symbols(i, sym) {
-			if (sym->flags & (SYMBOL_DEF << S_DEF_SAT))
-				sym->curr = sym->def[S_DEF_SAT];
-			else if (sym->flags & (SYMBOL_DEF << S_DEF_USER))
-				sym->curr = sym->def[S_DEF_USER];
-		}
+	satconfig_update_all_symbols();
 
-		struct expr *e;
-		expr_list_for_each_sym(sym_env_list, e, sym) {
-			struct property *prop;
-			struct symbol *env_sym;
-
-			prop = sym_get_env_prop(sym);
-			env_sym = prop_get_symbol(prop);
-			if (!env_sym)
-				continue;
-
-			sym->curr.val = getenv(env_sym->name);
-		}
-	}
-
-	{
-		/* Use assumptions */
-		unsigned int i;
-		struct symbol *sym;
-		for_all_symbols(i, sym) {
-			if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
-				continue;
-
-			bool assume = true;
-
-			if (!(sym->flags & (SYMBOL_DEF << S_DEF_SAT))) {
-				assume = false;
-			} else if (sym->flags & SYMBOL_CHOICE) {
-				assume = false;
-			} else {
-				switch (sym->curr.tri) {
-				case no:
-					picosat_assume(-sym_y(sym));
-					break;
-				case yes:
-					picosat_assume(sym_y(sym));
-					if (sym->type == S_TRISTATE)
-						picosat_assume(-sym_m(sym));
-					break;
-				case mod:
-					assert(sym->type == S_TRISTATE);
-					picosat_assume(sym_y(sym));
-					picosat_assume(sym_m(sym));
-					break;
-				}
-			}
-
-			if (assume)
-				picosat_assume(sym_assumed(sym));
-			else
-				picosat_assume(-sym_assumed(sym));
-		}
-	}
-
-	{
-		int sat = picosat_sat(-1);
-		unsigned int i;
-
-		if (sat != PICOSAT_SATISFIABLE) {
-			fprintf(stderr, "error: unsatisfiable constraints\n");
-
-			for (i = 0; i < picosat_added_original_clauses(); ++i) {
-				if (picosat_coreclause(i))
-					fprintf(stderr, "clause: %s\n", clauses[i]);
-			}
-
-			exit(EXIT_FAILURE);
-		}
-
-		struct symbol *sym;
-		for_all_symbols(i, sym) {
-			if (!sym->name)
-				continue;
-			if (sym->type != S_BOOLEAN && sym->type != S_TRISTATE)
-				continue;
-
-			{
-				int y = picosat_deref(sym_y(sym));
-				assert(y != 0);
-
-				if (y == 1) {
-					if (sym->type == S_TRISTATE) {
-						int m = picosat_deref(sym_m(sym));
-						assert(m != 0);
-
-						if (m == 1)
-							sym->curr.tri = mod;
-						else if (m == -1)
-							sym->curr.tri = yes;
-					} else {
-						sym->curr.tri = yes;
-					}
-				} else if (y == -1) {
-					if (sym->type == S_TRISTATE) {
-						int m = picosat_deref(sym_m(sym));
-						assert(m == -1);
-					}
-
-					sym->curr.tri = no;
-				}
-			}
-
-			sym->flags |= SYMBOL_VALID;
-			sym->flags |= SYMBOL_WRITE;
-		}
-	}
+	satconfig_solve();
 
 	if (conf_write(NULL)) {
 		fprintf(stderr, "error: writing .config\n");
