@@ -27,10 +27,10 @@ gconfig: $(obj)/gconf
 menuconfig: $(obj)/mconf
 	$< $(silent) $(Kconfig)
 
-satconfig: $(obj)/satconf
+satconfig: $(obj)/satconfig
 	$< $(silent) $(Kconfig)
 
-satrandconfig: $(obj)/satconf
+satrandconfig: $(obj)/satconfig
 	$< $(silent) --random $(Kconfig)
 
 satmenuconfig: $(obj)/satmconf
@@ -193,14 +193,14 @@ lxdialog += lxdialog/textbox.o lxdialog/yesno.o lxdialog/menubox.o
 conf-objs	:= conf.o  zconf.tab.o
 mconf-objs	:= mconf.o zconf.tab.o $(lxdialog)
 nconf-objs      := nconf.o zconf.tab.o nconf.gui.o
-satconf-objs	:= satconf.o zconf.tab.o picosat.o
+satconfig-objs	:= satconfig.o satconf.o zconf.tab.o picosat.o
 satmconf-objs	:= satmconf.o zconf.tab.o picosat.o $(lxdialog)
 kxgettext-objs	:= kxgettext.o zconf.tab.o
 qconf-cxxobjs	:= qconf.o
 qconf-objs	:= zconf.tab.o
 gconf-objs	:= gconf.o zconf.tab.o
 
-hostprogs-y := conf nconf mconf kxgettext qconf gconf satconf satmconf
+hostprogs-y := conf nconf mconf kxgettext qconf gconf satconfig satmconf
 
 clean-files	:= qconf.moc .tmp_qtcheck .tmp_gtkcheck
 clean-files	+= zconf.tab.c zconf.lex.c zconf.hash.c gconf.glade.h
