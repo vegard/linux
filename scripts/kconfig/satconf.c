@@ -1092,41 +1092,6 @@ int main(int argc, char *argv[])
 	 * tristate) variables. This should go away when we read .satconfig
 	 * instead for these kinds of variables. */
 	conf_read_simple(NULL, S_DEF_USER);
-	/* We need to override the S_DEF_USER values from the default
-	 * configuration with the corresponding values from .satconfig,
-	 * because S_DEF_USER influences the operation of the main kconfig
-	 * machinery. */
-	conf_read_simple(satconfig_file, S_DEF_USER);
-	conf_read_simple(satconfig_file, S_DEF_SAT);
-
-	{
-		/* We need to do this in order to give strings from the
-		 * environment get their values in the proper place. It
-		 * is also necessary for INT/HEX values, but doesn't
-		 * seem to make any difference for BOOL/TRISTATE
-		 * variables (we set them below anyway). */
-		unsigned int i;
-		struct symbol *sym;
-		for_all_symbols(i, sym) {
-			if (sym->flags & (SYMBOL_DEF << S_DEF_SAT))
-				sym->curr = sym->def[S_DEF_SAT];
-			else if (sym->flags & (SYMBOL_DEF << S_DEF_USER))
-				sym->curr = sym->def[S_DEF_USER];
-		}
-
-		struct expr *e;
-		expr_list_for_each_sym(sym_env_list, e, sym) {
-			struct property *prop;
-			struct symbol *env_sym;
-
-			prop = sym_get_env_prop(sym);
-			env_sym = prop_get_symbol(prop);
-			if (!env_sym)
-				continue;
-
-			sym->curr.val = getenv(env_sym->name);
-		}
-	}
 
 	assign_sat_variables();
 
@@ -1184,6 +1149,42 @@ int main(int argc, char *argv[])
 			}
 
 			exit(EXIT_FAILURE);
+		}
+	}
+
+	/* We need to override the S_DEF_USER values from the default
+	 * configuration with the corresponding values from .satconfig,
+	 * because S_DEF_USER influences the operation of the main kconfig
+	 * machinery. */
+	conf_read_simple(satconfig_file, S_DEF_USER);
+	conf_read_simple(satconfig_file, S_DEF_SAT);
+
+	{
+		/* We need to do this in order to give strings from the
+		 * environment get their values in the proper place. It
+		 * is also necessary for INT/HEX values, but doesn't
+		 * seem to make any difference for BOOL/TRISTATE
+		 * variables (we set them below anyway). */
+		unsigned int i;
+		struct symbol *sym;
+		for_all_symbols(i, sym) {
+			if (sym->flags & (SYMBOL_DEF << S_DEF_SAT))
+				sym->curr = sym->def[S_DEF_SAT];
+			else if (sym->flags & (SYMBOL_DEF << S_DEF_USER))
+				sym->curr = sym->def[S_DEF_USER];
+		}
+
+		struct expr *e;
+		expr_list_for_each_sym(sym_env_list, e, sym) {
+			struct property *prop;
+			struct symbol *env_sym;
+
+			prop = sym_get_env_prop(sym);
+			env_sym = prop_get_symbol(prop);
+			if (!env_sym)
+				continue;
+
+			sym->curr.val = getenv(env_sym->name);
 		}
 	}
 
