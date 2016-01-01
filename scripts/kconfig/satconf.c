@@ -225,16 +225,16 @@ static void or_expr_to_bool_expr(struct symbol *lhs,
 {
 	struct bool_expr *a[2];
 	struct bool_expr *b[2];
-	struct bool_expr *t1, *t2, *t3;
+	struct bool_expr *t1, *t2;
 
 	expr_to_bool_expr(lhs, in_a, a);
 	expr_to_bool_expr(lhs, in_b, b);
 
 	out[0] = bool_or(a[0], b[0]);
 
-	t2 = bool_dep(a[0], a[1]);
-	t3 = bool_dep(b[0], b[1]);
-	out[1] = bool_and_put(bool_get(out[0]), bool_and_put(t2, t3));
+	t1 = bool_dep(a[0], a[1]);
+	t2 = bool_dep(b[0], b[1]);
+	out[1] = bool_and_put(bool_get(out[0]), bool_and_put(t1, t2));
 
 	bool_put(a[0]);
 	bool_put(a[1]);
@@ -814,7 +814,7 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 {
 	struct bool_expr *condition[2];
 	struct bool_expr *e[2];
-	struct bool_expr *t2, *t3, *t4;
+	struct bool_expr *t2, *t3;
 	struct gstr str1, str2;
 
 	if (prop->visible.expr) {
@@ -842,7 +842,7 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 	}
 
 	expr_to_bool_expr(sym, prop->expr, e);
-	t4 = bool_dep_put(t2, e[0]);
+	t3 = bool_dep_put(t2, e[0]);
 	bool_put(e[1]);
 
 	str1 = str_new();
@@ -852,9 +852,9 @@ static bool build_select_clauses(struct symbol *sym, struct property *prop)
 		str_append(&str2, " if ");
 		expr_gstr_print(prop->visible.expr, &str2);
 	}
-	add_clauses(t4, "%s select %s%s", sym->name ?: "<choice>",
+	add_clauses(t3, "%s select %s%s", sym->name ?: "<choice>",
 		str_get(&str1), str_get(&str2));
-	bool_put(t4);
+	bool_put(t3);
 	str_free(&str1);
 	str_free(&str2);
 	return true;
