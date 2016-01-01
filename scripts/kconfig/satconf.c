@@ -13,6 +13,7 @@
 #include "bool.h"
 #include "lkc.h"
 #include "picosat.h"
+#include "satconf.h"
 
 #define CONFIG_DEBUG 0
 
