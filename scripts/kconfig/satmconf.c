@@ -21,6 +21,7 @@
 
 #include "lkc.h"
 #include "lxdialog/dialog.h"
+#include "satconf.h"
 
 static const char mconf_readme[] = N_(
 "Overview\n"
@@ -174,11 +175,11 @@ static const char mconf_readme[] = N_(
 "\n"),
 menu_instructions[] = N_(
 	"Arrow keys navigate the menu.  "
-	"<Enter> selects submenus ---> (or empty submenus ----).  "
-	"Highlighted letters are hotkeys.  "
-	"Pressing <Y> includes, <N> excludes, <M> modularizes features.  "
+	"<Enter> selects submenus.  Highlighted letters are hotkeys.  "
+	"Pressing <y> includes, <n> excludes, <m> modularizes features,  "
+	"and < > (space) states no preference.  "
 	"Press <Esc><Esc> to exit, <?> for Help, </> for Search.  "
-	"Legend: [*] built-in  [ ] excluded  <M> module  < > module capable"),
+	"Legend: [y] built-in  [n] excluded  <m> module  [ ] no preference."),
 radiolist_instructions[] = N_(
 	"Use the arrow keys to navigate this window or "
 	"press the hotkey of the item you wish to select "
@@ -463,6 +464,34 @@ again:
 	str_free(&sttext);
 }
 
+static char get_sat_ch(tristate val)
+{
+	switch (val) {
+	case yes:
+		return 'y';
+	case mod:
+		return 'm';
+	case no:
+		return 'n';
+	default:
+		assert(false);
+	}
+}
+
+static const char *get_val_str(tristate val)
+{
+	switch (val) {
+	case yes:
+		return "(Y)";
+	case mod:
+		return "(M)";
+	case no:
+		return "   ";
+	default:
+		assert(false);
+	}
+}
+
 static void build_conf(struct menu *menu)
 {
 	struct symbol *sym;
@@ -470,17 +499,9 @@ static void build_conf(struct menu *menu)
 	struct menu *child;
 	int type, tmp, doint = 2;
 	tristate val;
-	char ch;
-	bool visible;
+	tristate sat_val;
 
-	/*
-	 * note: menu_is_visible() has side effect that it will
-	 * recalc the value of the symbol.
-	 */
-	visible = menu_is_visible(menu);
-	if (show_all_options && !menu_has_prompt(menu))
-		return;
-	else if (!show_all_options && !visible)
+	if (!menu->prompt)
 		return;
 
 	sym = menu->sym;
@@ -497,9 +518,8 @@ static void build_conf(struct menu *menu)
 						  menu->data ? "-->" : "++>",
 						  indent + 1, ' ', prompt);
 				} else
-					item_make("   %*c%s  %s",
-						  indent + 1, ' ', prompt,
-						  menu_is_empty(menu) ? "----" : "--->");
+					item_make("      %*c%s  %s",
+						  indent + 1, ' ', prompt, "--->");
 				item_set_tag('m');
 				item_set_data(menu);
 				if (single_menu_mode && menu->data)
@@ -526,36 +546,36 @@ static void build_conf(struct menu *menu)
 		goto conf_childs;
 	}
 
-	type = sym_get_type(sym);
+	type = sym->type;
 	if (sym_is_choice(sym)) {
 		struct symbol *def_sym = sym_get_choice_value(sym);
 		struct menu *def_menu = NULL;
 
 		child_count++;
 		for (child = menu->list; child; child = child->next) {
-			if (menu_is_visible(child) && child->sym == def_sym)
+			if (child->sym == def_sym)
 				def_menu = child;
 		}
 
 		val = sym_get_tristate_value(sym);
+		sat_val = sym->def[S_DEF_SAT].tri;
 		if (sym_is_changable(sym)) {
 			switch (type) {
-			case S_BOOLEAN:
-				item_make("[%c]", val == no ? ' ' : '*');
-				break;
 			case S_TRISTATE:
-				switch (val) {
-				case yes: ch = '*'; break;
-				case mod: ch = 'M'; break;
-				default:  ch = ' '; break;
-				}
-				item_make("<%c>", ch);
+				item_make("<%c>%s",
+					sym->flags & SYMBOL_SAT ? get_sat_ch(sat_val) : ' ',
+					get_val_str(val));
+				break;
+			case S_BOOLEAN:
+				item_make("[%c]%s",
+					sym->flags & SYMBOL_SAT ? get_sat_ch(sat_val) : ' ',
+					get_val_str(val));
 				break;
 			}
 			item_set_tag('t');
 			item_set_data(menu);
 		} else {
-			item_make("   ");
+			item_make("      ");
 			item_set_tag(def_menu ? 't' : ':');
 			item_set_data(menu);
 		}
@@ -581,7 +601,8 @@ static void build_conf(struct menu *menu)
 			goto conf_childs;
 		}
 		child_count++;
-		val = sym_get_tristate_value(sym);
+		val = sym->curr.tri;
+		sat_val = sym->def[S_DEF_SAT].tri;
 		if (sym_is_choice_value(sym) && val == yes) {
 			item_make("   ");
 			item_set_tag(':');
@@ -589,38 +610,31 @@ static void build_conf(struct menu *menu)
 		} else {
 			switch (type) {
 			case S_BOOLEAN:
-				if (sym_is_changable(sym))
-					item_make("[%c]", val == no ? ' ' : '*');
-				else
-					item_make("-%c-", val == no ? ' ' : '*');
+				item_make("[%c]%s",
+					sym->flags & SYMBOL_SAT ? get_sat_ch(sat_val) : ' ',
+					get_val_str(val));
 				item_set_tag('t');
 				item_set_data(menu);
 				break;
 			case S_TRISTATE:
-				switch (val) {
-				case yes: ch = '*'; break;
-				case mod: ch = 'M'; break;
-				default:  ch = ' '; break;
-				}
-				if (sym_is_changable(sym)) {
-					if (sym->rev_dep.tri == mod)
-						item_make("{%c}", ch);
-					else
-						item_make("<%c>", ch);
-				} else
-					item_make("-%c-", ch);
+				item_make("<%c>%s",
+					sym->flags & SYMBOL_SAT ? get_sat_ch(sat_val) : ' ',
+					get_val_str(val));
 				item_set_tag('t');
 				item_set_data(menu);
 				break;
 			default:
-				tmp = 2 + strlen(sym_get_string_value(sym)); /* () = 2 */
-				item_make("(%s)", sym_get_string_value(sym));
-				tmp = indent - tmp + 4;
+				if (sym_get_string_value(sym)) {
+					tmp = 2 + strlen(sym_get_string_value(sym)); /* () = 2 */
+					item_make("(%s)", sym_get_string_value(sym));
+				} else {
+					tmp = 2;
+					item_make("(null)");
+				}
+				tmp = indent - tmp + 3;
 				if (tmp < 0)
 					tmp = 0;
-				item_add_str("%*c%s%s", tmp, ' ', _(menu_get_prompt(menu)),
-					     (sym_has_value(sym) || !sym_is_changable(sym)) ?
-					     "" : _(" (NEW)"));
+				item_add_str("%*c%s", tmp, ' ', _(menu_get_prompt(menu)));
 				item_set_tag('s');
 				item_set_data(menu);
 				goto conf_childs;
@@ -630,7 +644,7 @@ static void build_conf(struct menu *menu)
 			  (sym_has_value(sym) || !sym_is_changable(sym)) ?
 			  "" : _(" (NEW)"));
 		if (menu->prompt->type == P_MENU) {
-			item_add_str("  %s", menu_is_empty(menu) ? "----" : "--->");
+			item_add_str("  --->");
 			return;
 		}
 	}
@@ -640,6 +654,31 @@ conf_childs:
 	for (child = menu->list; child; child = child->next)
 		build_conf(child);
 	indent -= doint;
+}
+
+static bool solve(void)
+{
+	unsigned int text_size;
+	char *text;
+	unsigned int i;
+
+	if (satconfig_solve())
+		return true;
+
+	text_size = 0;
+	for (i = 0; i < satconfig_core_size; ++i)
+		text_size += strlen(satconfig_core[i]) + 1;
+
+	text = malloc(text_size + 1);
+	text[0] = '\0';
+
+	for (i = 0; i < satconfig_core_size; ++i) {
+		strcat(text, satconfig_core[i]);
+		strcat(text, "\n");
+	}
+
+	show_textbox("Unsatisfiable constraints", text, 5 + satconfig_core_size, 80);
+	free(text);
 }
 
 static void conf(struct menu *menu, struct menu *active_menu)
@@ -719,27 +758,38 @@ static void conf(struct menu *menu, struct menu *active_menu)
 			reset_subtitle();
 			conf_load();
 			break;
-		case 5:
+		case 5: /* y */
 			if (item_is_tag('t')) {
-				if (sym_set_tristate_value(sym, yes))
-					break;
-				if (sym_set_tristate_value(sym, mod))
-					show_textbox(NULL, setmod_text, 6, 74);
+				sym->def[S_DEF_SAT].tri = yes;
+				sym->flags |= SYMBOL_SAT;
+				satconfig_update_symbol(sym);
+
+				if (!solve()) {
+				}
 			}
 			break;
-		case 6:
-			if (item_is_tag('t'))
-				sym_set_tristate_value(sym, no);
+		case 6: /* n */
+			if (item_is_tag('t')) {
+				sym->def[S_DEF_SAT].tri = no;
+				sym->flags |= SYMBOL_SAT;
+				satconfig_update_symbol(sym);
+				satconfig_solve();
+			}
 			break;
-		case 7:
-			if (item_is_tag('t'))
-				sym_set_tristate_value(sym, mod);
+		case 7: /* m */
+			if (item_is_tag('t')) {
+				sym->def[S_DEF_SAT].tri = mod;
+				sym->flags |= SYMBOL_SAT;
+				satconfig_update_symbol(sym);
+				satconfig_solve();
+			}
 			break;
-		case 8:
-			if (item_is_tag('t'))
-				sym_toggle_tristate_value(sym);
-			else if (item_is_tag('m'))
-				conf(submenu, NULL);
+		case 8: /* space */
+			if (item_is_tag('t')) {
+				sym->flags &= ~SYMBOL_SAT;
+				satconfig_update_symbol(sym);
+				satconfig_solve();
+			}
 			break;
 		case 9:
 			search_conf();
@@ -811,8 +861,6 @@ static void conf_choice(struct menu *menu)
 
 		current_menu = menu;
 		for (child = menu->list; child; child = child->next) {
-			if (!menu_is_visible(child))
-				continue;
 			if (child->sym)
 				item_make("%s", _(menu_get_prompt(child)));
 			else {
@@ -1009,10 +1057,6 @@ int main(int ac, char **av)
 	char *mode;
 	int res;
 
-	setlocale(LC_ALL, "");
-	bindtextdomain(PACKAGE, LOCALEDIR);
-	textdomain(PACKAGE);
-
 	signal(SIGINT, sig_handler);
 
 	if (ac > 1 && strcmp(av[1], "-s") == 0) {
@@ -1021,8 +1065,12 @@ int main(int ac, char **av)
 		conf_set_message_callback(NULL);
 		av++;
 	}
-	conf_parse(av[1]);
-	conf_read(NULL);
+
+	satconfig_init(av[1], false);
+	conf_read_simple(".satconfig", S_DEF_SAT);
+
+	satconfig_update_all_symbols();
+	satconfig_solve();
 
 	mode = getenv("MENUCONFIG_MODE");
 	if (mode) {

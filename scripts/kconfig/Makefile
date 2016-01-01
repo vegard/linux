@@ -36,6 +36,7 @@ nconfig-prog	:= nconf
 gconfig-prog	:= gconf
 xconfig-prog	:= qconf
 satconfig-prog	:= satconf
+satmenuconfig-prog := satmconf
 
 define config_rule
 PHONY += $(1)
@@ -46,7 +47,7 @@ PHONY += build_$(1)
 build_$(1): $(obj)/$($(1)-prog)
 endef
 
-$(foreach c, config menuconfig nconfig gconfig xconfig satconfig, $(eval $(call config_rule,$(c))))
+$(foreach c, config menuconfig nconfig gconfig xconfig satconfig satmenuconfig, $(eval $(call config_rule,$(c))))
 
 PHONY += localmodconfig localyesconfig
 localyesconfig localmodconfig: $(obj)/conf
@@ -127,6 +128,7 @@ help:
 	@echo  '  gconfig	  - Update current config utilising a GTK+ based front-end'
 	@echo  '  satconfig       - New config respecting the .satconfig constraints'
 	@echo  '  satrandconfig	  - New config respecting .satconfig with random answers'
+	@echo  '  satmenuconfig	  - Edit .satconfig constraints using menuconfig-like editor'
 	@echo  '  oldconfig	  - Update current config utilising a provided .config as base'
 	@echo  '  localmodconfig  - Update current config disabling modules not loaded'
 	@echo  '                    except those preserved by LMC_KEEP environment variable'
@@ -220,6 +222,10 @@ $(obj)/gconf.o: $(obj)/gconf-cfg
 # satconf: Used for satconfig
 hostprogs	+= satconf
 satconf-objs	:= satconfig.o satconf.o picosat.o $(common-objs)
+
+# satmconf: Used for satmenuconfig
+hostprogs	+= satmconf
+satmconf-objs	:= satconfig.o satmconf.o picosat.o $(common-objs) $(lxdialog)
 
 # check if necessary packages are available, and configure build flags
 filechk_conf_cfg = $(CONFIG_SHELL) $<
