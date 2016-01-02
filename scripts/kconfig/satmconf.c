@@ -758,10 +758,11 @@ static void conf(struct menu *menu, struct menu *active_menu)
 			}
 			break;
 		case 8: /* space */
-			if (item_is_tag('t'))
-				sym_toggle_tristate_value(sym);
-			else if (item_is_tag('m'))
-				conf(submenu, NULL);
+			if (item_is_tag('t')) {
+				sym->flags &= ~SYMBOL_SAT;
+				satconfig_update_symbol(sym);
+				satconfig_solve();
+			}
 			break;
 		case 9:
 			search_conf();
