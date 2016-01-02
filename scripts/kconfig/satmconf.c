@@ -175,11 +175,11 @@ static const char mconf_readme[] = N_(
 "\n"),
 menu_instructions[] = N_(
 	"Arrow keys navigate the menu.  "
-	"<Enter> selects submenus ---> (or empty submenus ----).  "
-	"Highlighted letters are hotkeys.  "
-	"Pressing <Y> includes, <N> excludes, <M> modularizes features.  "
+	"<Enter> selects submenus.  Highlighted letters are hotkeys.  "
+	"Pressing <y> includes, <n> excludes, <m> modularizes features,  "
+	"and < > (space) states no preference.  "
 	"Press <Esc><Esc> to exit, <?> for Help, </> for Search.  "
-	"Legend: [*] built-in  [ ] excluded  <M> module  < > module capable"),
+	"Legend: [y] built-in  [n] excluded  <m> module  [ ] no preference."),
 radiolist_instructions[] = N_(
 	"Use the arrow keys to navigate this window or "
 	"press the hotkey of the item you wish to select "
