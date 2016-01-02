@@ -1218,6 +1218,9 @@ void satconfig_update_all_symbols(void)
 
 void satconfig_solve(void)
 {
+	picosat_reset_phases();
+	picosat_reset_scores();
+
 	int sat = picosat_sat(-1);
 	unsigned int i;
 
