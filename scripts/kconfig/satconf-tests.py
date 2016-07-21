@@ -24,6 +24,8 @@ def main():
         if not name.startswith('Kconfig.'):
             continue
 
+        print name
+
         with open(os.path.join(TESTS_DIR, name)) as f:
             Kconfig, testcases = prog.split(f.read())
 
@@ -34,7 +36,7 @@ def main():
         testcases = list(yaml.load_all(testcases))
 
         nr_success = 0
-        for testcase in testcases:
+        for i, testcase in enumerate(testcases):
             if not testcase:
                 testcase = {}
 
@@ -46,40 +48,46 @@ def main():
             output_path = os.path.join(tmpdir, '.output')
             p = subprocess.Popen([
                 'env', 'KCONFIG_CONFIG=' + output_path,
-                'scripts/kconfig/satconf', Kconfig_path, input_path,
+                'scripts/kconfig/satconfig', Kconfig_path, input_path,
             ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             stdoutdata, stderrdata = p.communicate()
 
             success = True
             if p.returncode == 0:
+                config = {}
+                with open(output_path) as f:
+                    lines = f.read().splitlines()
+
+                for line in lines:
+                    if not line.startswith('CONFIG_'):
+                        continue
+
+                    var, value = line[len('CONFIG_'):].strip().split('=')
+                    config[var] = value
+
                 if testcase.get('failure'):
                     success = False
+                    print " - %u. error: expected no solution" % (i, )
+                    for var, value in config.iteritems():
+                        print "      got %s=%s" % (var, value)
                 else:
-                    config = {}
-                    with open(output_path) as f:
-                        for line in f:
-                            if not line.startswith('CONFIG_'):
-                                continue
-
-                            var, value = line[len('CONFIG_'):].strip().split('=')
-                            config[var] = value
 
                     for var, value in testcase.get('output', {}).iteritems():
                         config_value = config.get(var, 'n')
                         if config_value != value:
-                            print "Expected %s=%s, got %s=%s" % (var, value, var, config_value)
+                            print " - %u. error: expected %s=%s, got %s=%s" % (i, var, value, var, config_value)
                             success = False
             else:
                 if not testcase.get('failure'):
+                    print " - %u. error: satconfig exited with return code %d" % (i, p.returncode, )
                     success = False
 
             if success:
-                nr_success += 1
-            else:
-                print stdoutdata
-                print stderrdata
+                print " - %u. success" % (i, )
 
-        print "[%2u/%2u] %s" % (nr_success, len(testcases), name)
+        print
+
+        #print "[%2u/%2u] %s" % (nr_success, len(testcases), name)
 
     shutil.rmtree(tmpdir)
 

@@ -21,7 +21,7 @@ output:
 ...
 
 # We should not be able to set ASN1=m just because it gets selected by
-# something else -- the select should onltyresult in ASN1=y.
+# something else -- the select should only result in ASN1=y.
 ---
 input:
   ASN1: m
