@@ -104,6 +104,15 @@ configuration of fault-injection capabilities.
 	Any positive value limits failures to only processes indicated by
 	/proc/<pid>/make-it-fail==1.
 
+- /sys/kernel/debug/fail*/fail_new_callsites:
+
+	Format: { 'Y' | 'N' }
+
+	A value of 'Y' will cause a callsite which has never been seen
+	before (since the last boot) to fail immediately. This can be
+	useful for triggering fault injection for very rare or hard-to-hit
+	call chains.
+
 - /sys/kernel/debug/fail*/require-start,
   /sys/kernel/debug/fail*/require-end,
   /sys/kernel/debug/fail*/reject-start,

@@ -64,7 +64,7 @@ static bool fail_task(struct fault_attr *attr, struct task_struct *task)
 
 #ifdef CONFIG_FAULT_INJECTION_STACKTRACE_FILTER
 
-static bool fail_stacktrace(struct fault_attr *attr)
+static bool fail_stacktrace(struct fault_attr *attr, unsigned int *hash)
 {
 	int depth = attr->stacktrace_depth;
 	unsigned long entries[MAX_STACK_TRACE_DEPTH];
@@ -83,12 +83,20 @@ static bool fail_stacktrace(struct fault_attr *attr)
 			       entries[n] < attr->require_end)
 			found = true;
 	}
+
+	{
+		const char *start = (const char *) &entries[0];
+		const char *end = (const char *) &entries[nr_entries];
+
+		*hash = full_name_hash(0, start, end - start);
+	}
+
 	return found;
 }
 
 #else
 
-static inline bool fail_stacktrace(struct fault_attr *attr)
+static inline bool fail_stacktrace(struct fault_attr *attr, unsigned int *hash)
 {
 	return true;
 }
@@ -129,6 +137,11 @@ out:
 
 bool should_fail(struct fault_attr *attr, ssize_t size)
 {
+	unsigned int hash = 0;
+
+	if (attr->task_filter && !fail_task(attr, current))
+		return false;
+
 	if (in_task()) {
 		unsigned int fail_nth = READ_ONCE(current->fail_nth);
 
@@ -142,11 +155,27 @@ bool should_fail(struct fault_attr *attr, ssize_t size)
 		}
 	}
 
-	/* No need to check any other properties if the probability is 0 */
-	if (attr->probability == 0)
+	if (!fail_stacktrace(attr, &hash))
 		return false;
 
-	if (attr->task_filter && !fail_task(attr, current))
+	if (IS_ENABLED(CONFIG_FAULT_INJECTION_STACKTRACE_FILTER) &&
+	    attr->fail_new_callsites) {
+		static unsigned long seen_hashtable[16 * 1024];
+
+		hash &= 8 * sizeof(seen_hashtable) - 1;
+		if (!test_and_set_bit(hash & (BITS_PER_LONG - 1),
+			&seen_hashtable[hash / BITS_PER_LONG]))
+		{
+			/*
+			 * If it's the first time we see this stacktrace, fail it
+			 * without a second thought.
+			 */
+			goto fail;
+		}
+	}
+
+	/* No need to check any other properties if the probability is 0 */
+	if (attr->probability == 0)
 		return false;
 
 	if (atomic_read(&attr->times) == 0)
@@ -164,9 +193,6 @@ bool should_fail(struct fault_attr *attr, ssize_t size)
 	}
 
 	if (attr->probability <= prandom_u32() % 100)
-		return false;
-
-	if (!fail_stacktrace(attr))
 		return false;
 
 fail:
@@ -238,6 +264,9 @@ struct dentry *fault_create_debugfs_attr(const char *name,
 	debugfs_create_u32("verbose_ratelimit_burst", mode, dir,
 			   &attr->ratelimit_state.burst);
 	debugfs_create_bool("task-filter", mode, dir, &attr->task_filter);
+
+	debugfs_create_bool("fail_new_callsites", mode, dir,
+			    &attr->fail_new_callsites);
 
 #ifdef CONFIG_FAULT_INJECTION_STACKTRACE_FILTER
 	debugfs_create_stacktrace_depth("stacktrace-depth", mode, dir,

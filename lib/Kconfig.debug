@@ -1998,7 +1998,12 @@ config FAULT_INJECTION_STACKTRACE_FILTER
 	select STACKTRACE
 	depends on FRAME_POINTER || MIPS || PPC || S390 || MICROBLAZE || ARM || ARC || X86
 	help
-	  Provide stacktrace filter for fault-injection capabilities
+	  Provide stacktrace filter for fault-injection capabilities.
+
+	  This also allows you to enable fault-injection for new callsites,
+	  i.e. a forced fault the first time a given call chain is seen.
+	  This can be useful for triggering fault injection for very rare
+	  or hard-to-hit call chains.
 
 config ARCH_HAS_KCOV
 	bool
