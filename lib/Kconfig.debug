@@ -1941,6 +1941,12 @@ config FAIL_MUTEX
 	help
 	  Provide fault-injection capability for mutex_trylock().
 
+config FAIL_RT_MUTEX
+	bool "Fault-injection capability for RT mutexes"
+	depends on FAULT_INJECTION && RT_MUTEXES
+	help
+	  Provide fault-injection capability for rt_mutex_trylock().
+
 config FAULT_INJECTION_DEBUG_FS
 	bool "Debugfs entries for fault-injection capabilities"
 	depends on FAULT_INJECTION && SYSFS && DEBUG_FS

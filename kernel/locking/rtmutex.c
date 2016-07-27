@@ -11,6 +11,7 @@
  *
  *  See Documentation/locking/rt-mutex-design.rst for details.
  */
+#include <linux/fault-inject.h>
 #include <linux/spinlock.h>
 #include <linux/export.h>
 #include <linux/sched/signal.h>
@@ -1435,6 +1436,28 @@ int __sched rt_mutex_lock_interruptible(struct rt_mutex *lock)
 }
 EXPORT_SYMBOL_GPL(rt_mutex_lock_interruptible);
 
+#ifdef CONFIG_FAIL_RT_MUTEX
+DECLARE_FAULT_ATTR(fail_rtmutex);
+
+static int __init fail_rtmutex_debugfs(void)
+{
+	struct dentry *dir = fault_create_debugfs_attr("fail_rtmutex",
+		NULL, &fail_rtmutex);
+	return PTR_ERR_OR_ZERO(dir);
+}
+late_initcall(fail_rtmutex_debugfs);
+
+static inline bool should_fail_rtmutex(struct rt_mutex *lock)
+{
+	return should_fail(&fail_rtmutex, 1);
+}
+#else
+static inline bool should_fail_rtmutex(struct rt_mutex *lock)
+{
+	return false;
+}
+#endif
+
 /**
  * rt_mutex_trylock - try to lock a rt_mutex
  *
@@ -1452,6 +1475,9 @@ int __sched rt_mutex_trylock(struct rt_mutex *lock)
 	int ret;
 
 	if (IS_ENABLED(CONFIG_DEBUG_RT_MUTEXES) && WARN_ON_ONCE(!in_task()))
+		return 0;
+
+	if (should_fail_rtmutex(lock))
 		return 0;
 
 	/*
