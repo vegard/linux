@@ -1935,6 +1935,12 @@ config FAIL_FUTEX
 	help
 	  Provide fault-injection capability for futexes.
 
+config FAIL_MUTEX
+	bool "Fault-injection capability for mutexes"
+	depends on FAULT_INJECTION
+	help
+	  Provide fault-injection capability for mutex_trylock().
+
 config FAULT_INJECTION_DEBUG_FS
 	bool "Debugfs entries for fault-injection capabilities"
 	depends on FAULT_INJECTION && SYSFS && DEBUG_FS

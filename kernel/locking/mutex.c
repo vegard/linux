@@ -18,6 +18,7 @@
  *
  * Also see Documentation/locking/mutex-design.rst.
  */
+#include <linux/fault-inject.h>
 #include <linux/mutex.h>
 #include <linux/ww_mutex.h>
 #include <linux/sched/signal.h>
@@ -1386,6 +1387,34 @@ __ww_mutex_lock_interruptible_slowpath(struct ww_mutex *lock,
 
 #endif
 
+#ifdef CONFIG_FAIL_MUTEX
+DECLARE_FAULT_ATTR(fail_mutex);
+
+static int __init setup_fail_mutex(char *str)
+{
+	return setup_fault_attr(&fail_mutex, str);
+}
+__setup("fail_mutex=", setup_fail_mutex);
+
+static int __init fail_mutex_debugfs(void)
+{
+	struct dentry *dir = fault_create_debugfs_attr("fail_mutex",
+		NULL, &fail_mutex);
+	return PTR_ERR_OR_ZERO(dir);
+}
+late_initcall(fail_mutex_debugfs);
+
+static inline bool should_fail_mutex(struct mutex *lock)
+{
+	return should_fail(&fail_mutex, 1);
+}
+#else
+static inline bool should_fail_mutex(struct mutex *lock)
+{
+	return false;
+}
+#endif
+
 /**
  * mutex_trylock - try to acquire the mutex, without waiting
  * @lock: the mutex to be acquired
@@ -1407,6 +1436,9 @@ int __sched mutex_trylock(struct mutex *lock)
 #ifdef CONFIG_DEBUG_MUTEXES
 	DEBUG_LOCKS_WARN_ON(lock->magic != lock);
 #endif
+
+	if (should_fail_mutex(lock))
+		return 0;
 
 	locked = __mutex_trylock(lock);
 	if (locked)
