@@ -359,8 +359,20 @@ static __always_inline void spin_lock_bh(spinlock_t *lock)
 	raw_spin_lock_bh(&lock->rlock);
 }
 
+#if defined(CONFIG_SMP) && defined(CONFIG_FAIL_SPINLOCK)
+extern bool should_fail_spinlock(spinlock_t *lock);
+#else
+static __always_inline bool should_fail_spinlock(spinlock_t *lock)
+{
+	return false;
+}
+#endif
+
 static __always_inline int spin_trylock(spinlock_t *lock)
 {
+	if (should_fail_spinlock(lock))
+		return 0;
+
 	return raw_spin_trylock(&lock->rlock);
 }
 

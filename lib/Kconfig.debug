@@ -1959,6 +1959,12 @@ config FAIL_RW_SEMAPHORE
 	help
 	  Provide fault-injection capability for down_{read,write}_trylock().
 
+config FAIL_SPINLOCK
+	bool "Fault-injection capability for spinlocks"
+	depends on FAULT_INJECTION
+	help
+	  Provide fault-injection capability for spin_trylock().
+
 config FAULT_INJECTION_DEBUG_FS
 	bool "Debugfs entries for fault-injection capabilities"
 	depends on FAULT_INJECTION && SYSFS && DEBUG_FS

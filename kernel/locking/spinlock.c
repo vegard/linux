@@ -15,6 +15,7 @@
  * frame contact the architecture maintainers.
  */
 
+#include <linux/fault-inject.h>
 #include <linux/linkage.h>
 #include <linux/preempt.h>
 #include <linux/spinlock.h>
@@ -397,3 +398,21 @@ notrace int in_lock_functions(unsigned long addr)
 	&& addr < (unsigned long)__lock_text_end;
 }
 EXPORT_SYMBOL(in_lock_functions);
+
+#ifdef CONFIG_FAIL_SPINLOCK
+static DECLARE_FAULT_ATTR(fail_spinlock);
+
+static int __init fail_spinlock_debugfs(void)
+{
+	struct dentry *dir = fault_create_debugfs_attr("fail_spinlock",
+		NULL, &fail_spinlock);
+	return PTR_ERR_OR_ZERO(dir);
+}
+late_initcall(fail_spinlock_debugfs);
+
+bool should_fail_spinlock(spinlock_t *lock)
+{
+	return should_fail(&fail_spinlock, 1);
+}
+
+#endif
