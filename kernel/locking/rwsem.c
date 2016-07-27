@@ -15,6 +15,7 @@
  * Peter Zijlstra <peterz@infradead.org>.
  */
 
+#include <linux/fault-inject.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
@@ -1344,6 +1345,28 @@ static inline void __downgrade_write(struct rw_semaphore *sem)
 		rwsem_downgrade_wake(sem);
 }
 
+#ifdef CONFIG_FAIL_RW_SEMAPHORE
+DECLARE_FAULT_ATTR(fail_rwsem);
+
+static int __init fail_rwsem_debugfs(void)
+{
+	struct dentry *dir = fault_create_debugfs_attr("fail_rwsem",
+		NULL, &fail_rwsem);
+	return PTR_ERR_OR_ZERO(dir);
+}
+late_initcall(fail_rwsem_debugfs);
+
+static inline bool should_fail_rwsem(struct rw_semaphore *sem)
+{
+	return should_fail(&fail_rwsem, 1);
+}
+#else
+static inline bool should_fail_rwsem(struct rw_semaphore *sem)
+{
+	return false;
+}
+#endif
+
 /*
  * lock for reading
  */
@@ -1389,8 +1412,12 @@ EXPORT_SYMBOL(down_read_killable);
  */
 int down_read_trylock(struct rw_semaphore *sem)
 {
-	int ret = __down_read_trylock(sem);
+	int ret;
 
+	if (should_fail_rwsem(sem))
+		return 0;
+
+	ret = __down_read_trylock(sem);
 	if (ret == 1)
 		rwsem_acquire_read(&sem->dep_map, 0, 1, _RET_IP_);
 	return ret;
@@ -1431,8 +1458,12 @@ EXPORT_SYMBOL(down_write_killable);
  */
 int down_write_trylock(struct rw_semaphore *sem)
 {
-	int ret = __down_write_trylock(sem);
+	int ret;
 
+	if (should_fail_rwsem(sem))
+		return 0;
+
+	ret = __down_write_trylock(sem);
 	if (ret == 1)
 		rwsem_acquire(&sem->dep_map, 0, 1, _RET_IP_);
 
