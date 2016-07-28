@@ -1947,6 +1947,12 @@ config FAIL_RT_MUTEX
 	help
 	  Provide fault-injection capability for rt_mutex_trylock().
 
+config FAIL_SEMAPHORE
+	bool "Fault-injection capability for semaphores"
+	depends on FAULT_INJECTION
+	help
+	  Provide fault-injection capability for down_trylock().
+
 config FAULT_INJECTION_DEBUG_FS
 	bool "Debugfs entries for fault-injection capabilities"
 	depends on FAULT_INJECTION && SYSFS && DEBUG_FS

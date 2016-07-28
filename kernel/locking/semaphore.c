@@ -24,6 +24,7 @@
  * semaphore.  If it's zero, there may be tasks waiting on the wait_list.
  */
 
+#include <linux/fault-inject.h>
 #include <linux/compiler.h>
 #include <linux/kernel.h>
 #include <linux/export.h>
@@ -114,6 +115,28 @@ int down_killable(struct semaphore *sem)
 }
 EXPORT_SYMBOL(down_killable);
 
+#ifdef CONFIG_FAIL_SEMAPHORE
+DECLARE_FAULT_ATTR(fail_semaphore);
+
+static int __init fail_semaphore_debugfs(void)
+{
+	struct dentry *dir = fault_create_debugfs_attr("fail_semaphore",
+		NULL, &fail_semaphore);
+	return PTR_ERR_OR_ZERO(dir);
+}
+late_initcall(fail_semaphore_debugfs);
+
+static inline bool should_fail_semaphore(struct semaphore *sem)
+{
+	return should_fail(&fail_semaphore, 1);
+}
+#else
+static inline bool should_fail_semaphore(struct semaphore *sem)
+{
+	return false;
+}
+#endif
+
 /**
  * down_trylock - try to acquire the semaphore, without waiting
  * @sem: the semaphore to be acquired
@@ -131,6 +154,9 @@ int down_trylock(struct semaphore *sem)
 {
 	unsigned long flags;
 	int count;
+
+	if (should_fail_semaphore(sem))
+		return 1;
 
 	raw_spin_lock_irqsave(&sem->lock, flags);
 	count = sem->count - 1;
