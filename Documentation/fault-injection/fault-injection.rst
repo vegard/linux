@@ -126,7 +126,7 @@ configuration of fault-injection capabilities.
 
 	Format: { 'Y' | 'N' }
 
-	default is 'N', setting it to 'Y' won't inject failures into
+	default is 'Y', setting it to 'N' will also inject failures into
 	highmem/user allocations.
 
 - /sys/kernel/debug/failslab/ignore-gfp-wait:
@@ -134,8 +134,8 @@ configuration of fault-injection capabilities.
 
 	Format: { 'Y' | 'N' }
 
-	default is 'N', setting it to 'Y' will inject failures
-	only into non-sleep allocations (GFP_ATOMIC allocations).
+	default is 'Y', setting it to 'N' will also inject failures into
+	allocations that may sleep (non-GFP_ATOMIC allocations).
 
 - /sys/kernel/debug/fail_page_alloc/min-order:
 
