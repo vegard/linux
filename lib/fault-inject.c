@@ -95,6 +95,33 @@ static inline bool fail_stacktrace(struct fault_attr *attr)
 
 #endif /* CONFIG_FAULT_INJECTION_STACKTRACE_FILTER */
 
+static DEFINE_PER_CPU(int, fault_active);
+
+static bool __fail(struct fault_attr *attr)
+{
+	bool ret = false;
+
+	/*
+	 * Prevent recursive fault injection (this could happen if for
+	 * example printing the fault would itself run some code that
+	 * could fail)
+	 */
+	preempt_disable();
+	if (unlikely(__this_cpu_inc_return(fault_active) != 1))
+		goto out;
+
+	ret = true;
+	fail_dump(attr);
+
+	if (atomic_read(&attr->times) != -1)
+		atomic_dec_not_zero(&attr->times);
+
+out:
+	__this_cpu_dec(fault_active);
+	preempt_enable();
+	return ret;
+}
+
 /*
  * This code is stolen from failmalloc-1.0
  * http://www.nongnu.org/failmalloc/
@@ -143,12 +170,7 @@ bool should_fail(struct fault_attr *attr, ssize_t size)
 		return false;
 
 fail:
-	fail_dump(attr);
-
-	if (atomic_read(&attr->times) != -1)
-		atomic_dec_not_zero(&attr->times);
-
-	return true;
+	return __fail(attr);
 }
 EXPORT_SYMBOL_GPL(should_fail);
 
