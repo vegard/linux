@@ -201,13 +201,13 @@ static inline int mm_has_notifiers(struct mm_struct *mm)
 }
 
 extern int mmu_notifier_register(struct mmu_notifier *mn,
-				 struct mm_struct *mm);
+				 struct mm_struct *mm, struct mm_ref *mm_ref);
 extern int __mmu_notifier_register(struct mmu_notifier *mn,
-				   struct mm_struct *mm);
+				   struct mm_struct *mm, struct mm_ref *mm_ref);
 extern void mmu_notifier_unregister(struct mmu_notifier *mn,
-				    struct mm_struct *mm);
+				    struct mm_struct *mm, struct mm_ref *mm_ref);
 extern void mmu_notifier_unregister_no_release(struct mmu_notifier *mn,
-					       struct mm_struct *mm);
+					       struct mm_struct *mm, struct mm_ref *ref);
 extern void __mmu_notifier_mm_destroy(struct mm_struct *mm);
 extern void __mmu_notifier_release(struct mm_struct *mm);
 extern int __mmu_notifier_clear_flush_young(struct mm_struct *mm,

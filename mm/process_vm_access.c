@@ -155,6 +155,7 @@ static ssize_t process_vm_rw_core(pid_t pid, struct iov_iter *iter,
 	struct page *pp_stack[PVM_MAX_PP_ARRAY_COUNT];
 	struct page **process_pages = pp_stack;
 	struct mm_struct *mm;
+	MM_REF(mm_ref);
 	unsigned long i;
 	ssize_t rc = 0;
 	unsigned long nr_pages = 0;
@@ -202,7 +203,7 @@ static ssize_t process_vm_rw_core(pid_t pid, struct iov_iter *iter,
 		goto free_proc_pages;
 	}
 
-	mm = mm_access(task, PTRACE_MODE_ATTACH_REALCREDS);
+	mm = mm_access(task, PTRACE_MODE_ATTACH_REALCREDS, &mm_ref);
 	if (!mm || IS_ERR(mm)) {
 		rc = IS_ERR(mm) ? PTR_ERR(mm) : -ESRCH;
 		/*
@@ -228,7 +229,7 @@ static ssize_t process_vm_rw_core(pid_t pid, struct iov_iter *iter,
 	if (total_len)
 		rc = total_len;
 
-	mmput(mm);
+	mmput(mm, &mm_ref);
 
 put_task_struct:
 	put_task_struct(task);

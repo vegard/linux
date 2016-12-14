@@ -407,6 +407,7 @@ void vhost_dev_init(struct vhost_dev *dev,
 	dev->umem = NULL;
 	dev->iotlb = NULL;
 	dev->mm = NULL;
+	INIT_MM_REF(&dev->mm_ref);
 	dev->worker = NULL;
 	init_llist_head(&dev->work_list);
 	init_waitqueue_head(&dev->wait);
@@ -483,7 +484,7 @@ long vhost_dev_set_owner(struct vhost_dev *dev)
 	}
 
 	/* No owner, become one */
-	dev->mm = get_task_mm(current);
+	dev->mm = get_task_mm(current, &dev->mm_ref);
 	worker = kthread_create(vhost_worker, dev, "vhost-%d", current->pid);
 	if (IS_ERR(worker)) {
 		err = PTR_ERR(worker);
@@ -507,7 +508,7 @@ err_cgroup:
 	dev->worker = NULL;
 err_worker:
 	if (dev->mm)
-		mmput(dev->mm);
+		mmput(dev->mm, &dev->mm_ref);
 	dev->mm = NULL;
 err_mm:
 	return err;
@@ -639,7 +640,7 @@ void vhost_dev_cleanup(struct vhost_dev *dev, bool locked)
 		dev->worker = NULL;
 	}
 	if (dev->mm)
-		mmput(dev->mm);
+		mmput(dev->mm, &dev->mm_ref);
 	dev->mm = NULL;
 }
 EXPORT_SYMBOL_GPL(vhost_dev_cleanup);

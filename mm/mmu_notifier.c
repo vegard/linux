@@ -244,7 +244,7 @@ EXPORT_SYMBOL_GPL(__mmu_notifier_invalidate_range);
 
 static int do_mmu_notifier_register(struct mmu_notifier *mn,
 				    struct mm_struct *mm,
-				    int take_mmap_sem)
+				    int take_mmap_sem, struct mm_ref *mm_ref)
 {
 	struct mmu_notifier_mm *mmu_notifier_mm;
 	int ret;
@@ -275,7 +275,7 @@ static int do_mmu_notifier_register(struct mmu_notifier *mn,
 		mm->mmu_notifier_mm = mmu_notifier_mm;
 		mmu_notifier_mm = NULL;
 	}
-	mmgrab(mm);
+	mmgrab(mm, mm_ref);
 
 	/*
 	 * Serialize the update against mmu_notifier_unregister. A
@@ -312,9 +312,9 @@ out:
  * after exit_mmap. ->release will always be called before exit_mmap
  * frees the pages.
  */
-int mmu_notifier_register(struct mmu_notifier *mn, struct mm_struct *mm)
+int mmu_notifier_register(struct mmu_notifier *mn, struct mm_struct *mm, struct mm_ref *mm_ref)
 {
-	return do_mmu_notifier_register(mn, mm, 1);
+	return do_mmu_notifier_register(mn, mm, 1, mm_ref);
 }
 EXPORT_SYMBOL_GPL(mmu_notifier_register);
 
@@ -322,9 +322,9 @@ EXPORT_SYMBOL_GPL(mmu_notifier_register);
  * Same as mmu_notifier_register but here the caller must hold the
  * mmap_sem in write mode.
  */
-int __mmu_notifier_register(struct mmu_notifier *mn, struct mm_struct *mm)
+int __mmu_notifier_register(struct mmu_notifier *mn, struct mm_struct *mm, struct mm_ref *mm_ref)
 {
-	return do_mmu_notifier_register(mn, mm, 0);
+	return do_mmu_notifier_register(mn, mm, 0, mm_ref);
 }
 EXPORT_SYMBOL_GPL(__mmu_notifier_register);
 
@@ -346,7 +346,7 @@ void __mmu_notifier_mm_destroy(struct mm_struct *mm)
  * and only after mmu_notifier_unregister returned we're guaranteed
  * that ->release or any other method can't run anymore.
  */
-void mmu_notifier_unregister(struct mmu_notifier *mn, struct mm_struct *mm)
+void mmu_notifier_unregister(struct mmu_notifier *mn, struct mm_struct *mm, struct mm_ref *mm_ref)
 {
 	BUG_ON(atomic_read(&mm->mm_count) <= 0);
 
@@ -383,7 +383,7 @@ void mmu_notifier_unregister(struct mmu_notifier *mn, struct mm_struct *mm)
 
 	BUG_ON(atomic_read(&mm->mm_count) <= 0);
 
-	mmdrop(mm);
+	mmdrop(mm, mm_ref);
 }
 EXPORT_SYMBOL_GPL(mmu_notifier_unregister);
 
@@ -391,7 +391,7 @@ EXPORT_SYMBOL_GPL(mmu_notifier_unregister);
  * Same as mmu_notifier_unregister but no callback and no srcu synchronization.
  */
 void mmu_notifier_unregister_no_release(struct mmu_notifier *mn,
-					struct mm_struct *mm)
+					struct mm_struct *mm, struct mm_ref *mm_ref)
 {
 	spin_lock(&mm->mmu_notifier_mm->lock);
 	/*
@@ -402,7 +402,7 @@ void mmu_notifier_unregister_no_release(struct mmu_notifier *mn,
 	spin_unlock(&mm->mmu_notifier_mm->lock);
 
 	BUG_ON(atomic_read(&mm->mm_count) <= 0);
-	mmdrop(mm);
+	mmdrop(mm, mm_ref);
 }
 EXPORT_SYMBOL_GPL(mmu_notifier_unregister_no_release);
 

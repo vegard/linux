@@ -1659,6 +1659,7 @@ SYSCALL_DEFINE6(move_pages, pid_t, pid, unsigned long, nr_pages,
 	const struct cred *cred = current_cred(), *tcred;
 	struct task_struct *task;
 	struct mm_struct *mm;
+	MM_REF(mm_ref);
 	int err;
 	nodemask_t task_nodes;
 
@@ -1699,7 +1700,7 @@ SYSCALL_DEFINE6(move_pages, pid_t, pid, unsigned long, nr_pages,
 		goto out;
 
 	task_nodes = cpuset_mems_allowed(task);
-	mm = get_task_mm(task);
+	mm = get_task_mm(task, &mm_ref);
 	put_task_struct(task);
 
 	if (!mm)
@@ -1711,7 +1712,7 @@ SYSCALL_DEFINE6(move_pages, pid_t, pid, unsigned long, nr_pages,
 	else
 		err = do_pages_stat(mm, nr_pages, pages, status);
 
-	mmput(mm);
+	mmput(mm, &mm_ref);
 	return err;
 
 out:

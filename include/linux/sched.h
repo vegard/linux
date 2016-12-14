@@ -25,6 +25,7 @@ struct sched_param {
 #include <linux/errno.h>
 #include <linux/nodemask.h>
 #include <linux/mm_types.h>
+#include <linux/mm_ref.h>
 #include <linux/preempt.h>
 
 #include <asm/page.h>
@@ -808,6 +809,7 @@ struct signal_struct {
 					 * Only settable by CAP_SYS_RESOURCE. */
 	struct mm_struct *oom_mm;	/* recorded mm when the thread group got
 					 * killed by the oom killer */
+	struct mm_ref oom_mm_ref;
 
 	struct mutex cred_guard_mutex;	/* guard against foreign influences on
 					 * credential calculations
@@ -1546,7 +1548,16 @@ struct task_struct {
 	struct rb_node pushable_dl_tasks;
 #endif
 
+	/*
+	 * ->mm and ->active_mm share the mm_ref. Not ideal IMHO, but that's
+	 * how it's done. For kernel threads, ->mm == NULL, and for user
+	 * threads, ->mm == ->active_mm, so we only need one reference.
+	 *
+	 * See <Documentation/vm/active_mm.txt> for more information.
+	 */
 	struct mm_struct *mm, *active_mm;
+	struct mm_ref mm_ref;
+
 	/* per-thread vma caching */
 	u32 vmacache_seqnum;
 	struct vm_area_struct *vmacache[VMACACHE_SIZE];
@@ -2639,6 +2650,7 @@ extern union thread_union init_thread_union;
 extern struct task_struct init_task;
 
 extern struct   mm_struct init_mm;
+extern struct mm_ref init_mm_ref;
 
 extern struct pid_namespace init_pid_ns;
 
@@ -2870,17 +2882,19 @@ static inline unsigned long sigsp(unsigned long sp, struct ksignal *ksig)
 /*
  * Routines for handling mm_structs
  */
-extern struct mm_struct * mm_alloc(void);
+extern struct mm_struct * mm_alloc(struct mm_ref *ref);
 
-static inline void mmgrab(struct mm_struct *mm)
+static inline void mmgrab(struct mm_struct *mm, struct mm_ref *ref)
 {
 	atomic_inc(&mm->mm_count);
+	get_mm_ref(mm, ref);
 }
 
 /* mmdrop drops the mm and the page tables */
 extern void __mmdrop(struct mm_struct *);
-static inline void mmdrop(struct mm_struct *mm)
+static inline void mmdrop(struct mm_struct *mm, struct mm_ref *ref)
 {
+	put_mm_ref(mm, ref);
 	if (unlikely(atomic_dec_and_test(&mm->mm_count)))
 		__mmdrop(mm);
 }
@@ -2891,41 +2905,47 @@ static inline void mmdrop_async_fn(struct work_struct *work)
 	__mmdrop(mm);
 }
 
-static inline void mmdrop_async(struct mm_struct *mm)
+static inline void mmdrop_async(struct mm_struct *mm, struct mm_ref *ref)
 {
+	put_mm_ref(mm, ref);
 	if (unlikely(atomic_dec_and_test(&mm->mm_count))) {
 		INIT_WORK(&mm->async_put_work, mmdrop_async_fn);
 		schedule_work(&mm->async_put_work);
 	}
 }
 
-static inline void mmget(struct mm_struct *mm)
+static inline void mmget(struct mm_struct *mm, struct mm_ref *ref)
 {
 	atomic_inc(&mm->mm_users);
+	get_mm_users_ref(mm, ref);
 }
 
-static inline bool mmget_not_zero(struct mm_struct *mm)
+static inline bool mmget_not_zero(struct mm_struct *mm, struct mm_ref *ref)
 {
-	return atomic_inc_not_zero(&mm->mm_users);
+	bool not_zero = atomic_inc_not_zero(&mm->mm_users);
+	if (not_zero)
+		get_mm_users_ref(mm, ref);
+
+	return not_zero;
 }
 
 /* mmput gets rid of the mappings and all user-space */
-extern void mmput(struct mm_struct *);
+extern void mmput(struct mm_struct *, struct mm_ref *);
 #ifdef CONFIG_MMU
 /* same as above but performs the slow path from the async context. Can
  * be called from the atomic context as well
  */
-extern void mmput_async(struct mm_struct *);
+extern void mmput_async(struct mm_struct *, struct mm_ref *ref);
 #endif
 
 /* Grab a reference to a task's mm, if it is not already going away */
-extern struct mm_struct *get_task_mm(struct task_struct *task);
+extern struct mm_struct *get_task_mm(struct task_struct *task, struct mm_ref *mm_ref);
 /*
  * Grab a reference to a task's mm, if it is not already going away
  * and ptrace_may_access with the mode parameter passed to it
  * succeeds.
  */
-extern struct mm_struct *mm_access(struct task_struct *task, unsigned int mode);
+extern struct mm_struct *mm_access(struct task_struct *task, unsigned int mode, struct mm_ref *mm_ref);
 /* Remove the current tasks stale references to the old mm_struct */
 extern void mm_release(struct task_struct *, struct mm_struct *);
 

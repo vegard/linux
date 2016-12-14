@@ -462,6 +462,7 @@ assign_new_owner:
 static void exit_mm(struct task_struct *tsk)
 {
 	struct mm_struct *mm = tsk->mm;
+	MM_REF(mm_ref);
 	struct core_state *core_state;
 
 	mm_release(tsk, mm);
@@ -500,7 +501,7 @@ static void exit_mm(struct task_struct *tsk)
 		__set_task_state(tsk, TASK_RUNNING);
 		down_read(&mm->mmap_sem);
 	}
-	mmgrab(mm);
+	mmgrab(mm, &mm_ref);
 	BUG_ON(mm != tsk->active_mm);
 	/* more a memory barrier than a real lock */
 	task_lock(tsk);
@@ -509,7 +510,7 @@ static void exit_mm(struct task_struct *tsk)
 	enter_lazy_tlb(mm, current);
 	task_unlock(tsk);
 	mm_update_next_owner(mm);
-	mmput(mm);
+	mmput(mm, &mm_ref);
 	if (test_thread_flag(TIF_MEMDIE))
 		exit_oom_victim();
 }

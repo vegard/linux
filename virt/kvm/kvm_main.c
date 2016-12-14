@@ -482,7 +482,8 @@ static const struct mmu_notifier_ops kvm_mmu_notifier_ops = {
 static int kvm_init_mmu_notifier(struct kvm *kvm)
 {
 	kvm->mmu_notifier.ops = &kvm_mmu_notifier_ops;
-	return mmu_notifier_register(&kvm->mmu_notifier, current->mm);
+	return mmu_notifier_register(&kvm->mmu_notifier, current->mm,
+		&kvm->mmu_notifier_ref);
 }
 
 #else  /* !(CONFIG_MMU_NOTIFIER && KVM_ARCH_WANT_MMU_NOTIFIER) */
@@ -608,12 +609,13 @@ static struct kvm *kvm_create_vm(unsigned long type)
 {
 	int r, i;
 	struct kvm *kvm = kvm_arch_alloc_vm();
+	MM_REF(mm_ref);
 
 	if (!kvm)
 		return ERR_PTR(-ENOMEM);
 
 	spin_lock_init(&kvm->mmu_lock);
-	mmgrab(current->mm);
+	mmgrab(current->mm, &kvm->mm_ref);
 	kvm->mm = current->mm;
 	kvm_eventfd_init(kvm);
 	mutex_init(&kvm->lock);
@@ -654,6 +656,7 @@ static struct kvm *kvm_create_vm(unsigned long type)
 			goto out_err;
 	}
 
+	INIT_MM_REF(&kvm->mmu_notifier_ref);
 	r = kvm_init_mmu_notifier(kvm);
 	if (r)
 		goto out_err;
@@ -677,8 +680,9 @@ out_err_no_disable:
 		kfree(kvm->buses[i]);
 	for (i = 0; i < KVM_ADDRESS_SPACE_NUM; i++)
 		kvm_free_memslots(kvm, kvm->memslots[i]);
+	move_mm_ref(kvm->mm, &kvm->mm_ref, &mm_ref);
 	kvm_arch_free_vm(kvm);
-	mmdrop(current->mm);
+	mmdrop(current->mm, &mm_ref);
 	return ERR_PTR(r);
 }
 
@@ -713,6 +717,7 @@ static void kvm_destroy_vm(struct kvm *kvm)
 {
 	int i;
 	struct mm_struct *mm = kvm->mm;
+	MM_REF(mm_ref);
 
 	kvm_destroy_vm_debugfs(kvm);
 	kvm_arch_sync_events(kvm);
@@ -724,7 +729,7 @@ static void kvm_destroy_vm(struct kvm *kvm)
 		kvm_io_bus_destroy(kvm->buses[i]);
 	kvm_coalesced_mmio_free(kvm);
 #if defined(CONFIG_MMU_NOTIFIER) && defined(KVM_ARCH_WANT_MMU_NOTIFIER)
-	mmu_notifier_unregister(&kvm->mmu_notifier, kvm->mm);
+	mmu_notifier_unregister(&kvm->mmu_notifier, kvm->mm, &kvm->mmu_notifier_ref);
 #else
 	kvm_arch_flush_shadow_all(kvm);
 #endif
@@ -734,10 +739,11 @@ static void kvm_destroy_vm(struct kvm *kvm)
 		kvm_free_memslots(kvm, kvm->memslots[i]);
 	cleanup_srcu_struct(&kvm->irq_srcu);
 	cleanup_srcu_struct(&kvm->srcu);
+	move_mm_ref(mm, &kvm->mm_ref, &mm_ref);
 	kvm_arch_free_vm(kvm);
 	preempt_notifier_dec();
 	hardware_disable_all();
-	mmdrop(mm);
+	mmdrop(mm, &mm_ref);
 }
 
 void kvm_get_kvm(struct kvm *kvm)

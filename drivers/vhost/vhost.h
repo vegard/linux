@@ -151,6 +151,7 @@ struct vhost_msg_node {
 
 struct vhost_dev {
 	struct mm_struct *mm;
+	struct mm_ref mm_ref;
 	struct mutex mutex;
 	struct vhost_virtqueue **vqs;
 	int nvqs;

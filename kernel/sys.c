@@ -1603,11 +1603,12 @@ out:
 	cputime_to_timeval(stime, &r->ru_stime);
 
 	if (who != RUSAGE_CHILDREN) {
-		struct mm_struct *mm = get_task_mm(p);
+		MM_REF(mm_ref);
+		struct mm_struct *mm = get_task_mm(p, &mm_ref);
 
 		if (mm) {
 			setmax_mm_hiwater_rss(&maxrss, mm);
-			mmput(mm);
+			mmput(mm, &mm_ref);
 		}
 	}
 	r->ru_maxrss = maxrss * (PAGE_SIZE / 1024); /* convert pages to KBs */

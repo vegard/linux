@@ -3954,15 +3954,16 @@ int access_process_vm(struct task_struct *tsk, unsigned long addr,
 		void *buf, int len, unsigned int gup_flags)
 {
 	struct mm_struct *mm;
+	MM_REF(mm_ref);
 	int ret;
 
-	mm = get_task_mm(tsk);
+	mm = get_task_mm(tsk, &mm_ref);
 	if (!mm)
 		return 0;
 
 	ret = __access_remote_vm(tsk, mm, addr, buf, len, gup_flags);
 
-	mmput(mm);
+	mmput(mm, &mm_ref);
 
 	return ret;
 }

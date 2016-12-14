@@ -201,6 +201,7 @@ static ssize_t proc_pid_cmdline_read(struct file *file, char __user *buf,
 {
 	struct task_struct *tsk;
 	struct mm_struct *mm;
+	MM_REF(mm_ref);
 	char *page;
 	unsigned long count = _count;
 	unsigned long arg_start, arg_end, env_start, env_end;
@@ -214,7 +215,7 @@ static ssize_t proc_pid_cmdline_read(struct file *file, char __user *buf,
 	tsk = get_proc_task(file_inode(file));
 	if (!tsk)
 		return -ESRCH;
-	mm = get_task_mm(tsk);
+	mm = get_task_mm(tsk, &mm_ref);
 	put_task_struct(tsk);
 	if (!mm)
 		return 0;
@@ -389,7 +390,7 @@ skip_argv_envp:
 out_free_page:
 	free_page((unsigned long)page);
 out_mmput:
-	mmput(mm);
+	mmput(mm, &mm_ref);
 	if (rv > 0)
 		*pos += rv;
 	return rv;
@@ -784,34 +785,50 @@ static const struct file_operations proc_single_file_operations = {
 };
 
 
-struct mm_struct *proc_mem_open(struct inode *inode, unsigned int mode)
+struct mm_struct *proc_mem_open(struct inode *inode, unsigned int mode, struct mm_ref *mm_ref)
 {
 	struct task_struct *task = get_proc_task(inode);
 	struct mm_struct *mm = ERR_PTR(-ESRCH);
+	MM_REF(tmp_ref);
 
 	if (task) {
-		mm = mm_access(task, mode | PTRACE_MODE_FSCREDS);
+		mm = mm_access(task, mode | PTRACE_MODE_FSCREDS, &tmp_ref);
 		put_task_struct(task);
 
 		if (!IS_ERR_OR_NULL(mm)) {
 			/* ensure this mm_struct can't be freed */
-			mmgrab(mm);
+			mmgrab(mm, mm_ref);
 			/* but do not pin its memory */
-			mmput(mm);
+			mmput(mm, &tmp_ref);
 		}
 	}
 
 	return mm;
 }
 
+struct mem_private {
+	struct mm_struct *mm;
+	struct mm_ref mm_ref;
+};
+
 static int __mem_open(struct inode *inode, struct file *file, unsigned int mode)
 {
-	struct mm_struct *mm = proc_mem_open(inode, mode);
+	struct mem_private *priv;
+	struct mm_struct *mm;
 
-	if (IS_ERR(mm))
+	priv = kmalloc(sizeof(struct mem_private), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+
+	INIT_MM_REF(&priv->mm_ref);
+	mm = proc_mem_open(inode, mode, &priv->mm_ref);
+	if (IS_ERR(mm)) {
+		kfree(priv);
 		return PTR_ERR(mm);
+	}
 
-	file->private_data = mm;
+	priv->mm = mm;
+	file->private_data = priv;
 	return 0;
 }
 
@@ -828,7 +845,9 @@ static int mem_open(struct inode *inode, struct file *file)
 static ssize_t mem_rw(struct file *file, char __user *buf,
 			size_t count, loff_t *ppos, int write)
 {
-	struct mm_struct *mm = file->private_data;
+	struct mem_private *priv = file->private_data;
+	struct mm_struct *mm = priv->mm;
+	MM_REF(mm_ref);
 	unsigned long addr = *ppos;
 	ssize_t copied;
 	char *page;
@@ -842,7 +861,7 @@ static ssize_t mem_rw(struct file *file, char __user *buf,
 		return -ENOMEM;
 
 	copied = 0;
-	if (!mmget_not_zero(mm))
+	if (!mmget_not_zero(mm, &mm_ref))
 		goto free;
 
 	/* Maybe we should limit FOLL_FORCE to actual ptrace users? */
@@ -877,7 +896,7 @@ static ssize_t mem_rw(struct file *file, char __user *buf,
 	}
 	*ppos = addr;
 
-	mmput(mm);
+	mmput(mm, &mm_ref);
 free:
 	free_page((unsigned long) page);
 	return copied;
@@ -913,9 +932,11 @@ loff_t mem_lseek(struct file *file, loff_t offset, int orig)
 
 static int mem_release(struct inode *inode, struct file *file)
 {
-	struct mm_struct *mm = file->private_data;
+	struct mem_private *priv = file->private_data;
+	struct mm_struct *mm = priv->mm;
 	if (mm)
-		mmdrop(mm);
+		mmdrop(mm, &priv->mm_ref);
+	kfree(priv);
 	return 0;
 }
 
@@ -935,10 +956,12 @@ static int environ_open(struct inode *inode, struct file *file)
 static ssize_t environ_read(struct file *file, char __user *buf,
 			size_t count, loff_t *ppos)
 {
+	struct mem_private *priv = file->private_data;
 	char *page;
 	unsigned long src = *ppos;
 	int ret = 0;
-	struct mm_struct *mm = file->private_data;
+	struct mm_struct *mm = priv->mm;
+	MM_REF(mm_ref);
 	unsigned long env_start, env_end;
 
 	/* Ensure the process spawned far enough to have an environment. */
@@ -950,7 +973,7 @@ static ssize_t environ_read(struct file *file, char __user *buf,
 		return -ENOMEM;
 
 	ret = 0;
-	if (!mmget_not_zero(mm))
+	if (!mmget_not_zero(mm, &mm_ref))
 		goto free;
 
 	down_read(&mm->mmap_sem);
@@ -988,7 +1011,7 @@ static ssize_t environ_read(struct file *file, char __user *buf,
 		count -= retval;
 	}
 	*ppos = src;
-	mmput(mm);
+	mmput(mm, &mm_ref);
 
 free:
 	free_page((unsigned long) page);
@@ -1010,7 +1033,8 @@ static int auxv_open(struct inode *inode, struct file *file)
 static ssize_t auxv_read(struct file *file, char __user *buf,
 			size_t count, loff_t *ppos)
 {
-	struct mm_struct *mm = file->private_data;
+	struct mem_private *priv = file->private_data;
+	struct mm_struct *mm = priv->mm;
 	unsigned int nwords = 0;
 
 	if (!mm)
@@ -1053,6 +1077,7 @@ static int __set_oom_adj(struct file *file, int oom_adj, bool legacy)
 {
 	static DEFINE_MUTEX(oom_adj_mutex);
 	struct mm_struct *mm = NULL;
+	MM_REF(mm_ref);
 	struct task_struct *task;
 	int err = 0;
 
@@ -1093,7 +1118,7 @@ static int __set_oom_adj(struct file *file, int oom_adj, bool legacy)
 		if (p) {
 			if (atomic_read(&p->mm->mm_users) > 1) {
 				mm = p->mm;
-				mmgrab(mm);
+				mmgrab(mm, &mm_ref);
 			}
 			task_unlock(p);
 		}
@@ -1129,7 +1154,7 @@ static int __set_oom_adj(struct file *file, int oom_adj, bool legacy)
 			task_unlock(p);
 		}
 		rcu_read_unlock();
-		mmdrop(mm);
+		mmdrop(mm, &mm_ref);
 	}
 err_unlock:
 	mutex_unlock(&oom_adj_mutex);
@@ -1875,6 +1900,7 @@ static int map_files_d_revalidate(struct dentry *dentry, unsigned int flags)
 	unsigned long vm_start, vm_end;
 	bool exact_vma_exists = false;
 	struct mm_struct *mm = NULL;
+	MM_REF(mm_ref);
 	struct task_struct *task;
 	const struct cred *cred;
 	struct inode *inode;
@@ -1888,7 +1914,7 @@ static int map_files_d_revalidate(struct dentry *dentry, unsigned int flags)
 	if (!task)
 		goto out_notask;
 
-	mm = mm_access(task, PTRACE_MODE_READ_FSCREDS);
+	mm = mm_access(task, PTRACE_MODE_READ_FSCREDS, &mm_ref);
 	if (IS_ERR_OR_NULL(mm))
 		goto out;
 
@@ -1898,7 +1924,7 @@ static int map_files_d_revalidate(struct dentry *dentry, unsigned int flags)
 		up_read(&mm->mmap_sem);
 	}
 
-	mmput(mm);
+	mmput(mm, &mm_ref);
 
 	if (exact_vma_exists) {
 		if (task_dumpable(task)) {
@@ -1933,6 +1959,7 @@ static int map_files_get_link(struct dentry *dentry, struct path *path)
 	struct vm_area_struct *vma;
 	struct task_struct *task;
 	struct mm_struct *mm;
+	MM_REF(mm_ref);
 	int rc;
 
 	rc = -ENOENT;
@@ -1940,7 +1967,7 @@ static int map_files_get_link(struct dentry *dentry, struct path *path)
 	if (!task)
 		goto out;
 
-	mm = get_task_mm(task);
+	mm = get_task_mm(task, &mm_ref);
 	put_task_struct(task);
 	if (!mm)
 		goto out;
@@ -1960,7 +1987,7 @@ static int map_files_get_link(struct dentry *dentry, struct path *path)
 	up_read(&mm->mmap_sem);
 
 out_mmput:
-	mmput(mm);
+	mmput(mm, &mm_ref);
 out:
 	return rc;
 }
@@ -2034,6 +2061,7 @@ static struct dentry *proc_map_files_lookup(struct inode *dir,
 	struct task_struct *task;
 	int result;
 	struct mm_struct *mm;
+	MM_REF(mm_ref);
 
 	result = -ENOENT;
 	task = get_proc_task(dir);
@@ -2048,7 +2076,7 @@ static struct dentry *proc_map_files_lookup(struct inode *dir,
 	if (dname_to_vma_addr(dentry, &vm_start, &vm_end))
 		goto out_put_task;
 
-	mm = get_task_mm(task);
+	mm = get_task_mm(task, &mm_ref);
 	if (!mm)
 		goto out_put_task;
 
@@ -2063,7 +2091,7 @@ static struct dentry *proc_map_files_lookup(struct inode *dir,
 
 out_no_vma:
 	up_read(&mm->mmap_sem);
-	mmput(mm);
+	mmput(mm, &mm_ref);
 out_put_task:
 	put_task_struct(task);
 out:
@@ -2082,6 +2110,7 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 	struct vm_area_struct *vma;
 	struct task_struct *task;
 	struct mm_struct *mm;
+	MM_REF(mm_ref);
 	unsigned long nr_files, pos, i;
 	struct flex_array *fa = NULL;
 	struct map_files_info info;
@@ -2101,7 +2130,7 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 	if (!dir_emit_dots(file, ctx))
 		goto out_put_task;
 
-	mm = get_task_mm(task);
+	mm = get_task_mm(task, &mm_ref);
 	if (!mm)
 		goto out_put_task;
 	down_read(&mm->mmap_sem);
@@ -2132,7 +2161,7 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 			if (fa)
 				flex_array_free(fa);
 			up_read(&mm->mmap_sem);
-			mmput(mm);
+			mmput(mm, &mm_ref);
 			goto out_put_task;
 		}
 		for (i = 0, vma = mm->mmap, pos = 2; vma;
@@ -2164,7 +2193,7 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 	}
 	if (fa)
 		flex_array_free(fa);
-	mmput(mm);
+	mmput(mm, &mm_ref);
 
 out_put_task:
 	put_task_struct(task);
@@ -2567,6 +2596,7 @@ static ssize_t proc_coredump_filter_read(struct file *file, char __user *buf,
 {
 	struct task_struct *task = get_proc_task(file_inode(file));
 	struct mm_struct *mm;
+	MM_REF(mm_ref);
 	char buffer[PROC_NUMBUF];
 	size_t len;
 	int ret;
@@ -2575,12 +2605,12 @@ static ssize_t proc_coredump_filter_read(struct file *file, char __user *buf,
 		return -ESRCH;
 
 	ret = 0;
-	mm = get_task_mm(task);
+	mm = get_task_mm(task, &mm_ref);
 	if (mm) {
 		len = snprintf(buffer, sizeof(buffer), "%08lx\n",
 			       ((mm->flags & MMF_DUMP_FILTER_MASK) >>
 				MMF_DUMP_FILTER_SHIFT));
-		mmput(mm);
+		mmput(mm, &mm_ref);
 		ret = simple_read_from_buffer(buf, count, ppos, buffer, len);
 	}
 
@@ -2596,6 +2626,7 @@ static ssize_t proc_coredump_filter_write(struct file *file,
 {
 	struct task_struct *task;
 	struct mm_struct *mm;
+	MM_REF(mm_ref);
 	unsigned int val;
 	int ret;
 	int i;
@@ -2610,7 +2641,7 @@ static ssize_t proc_coredump_filter_write(struct file *file,
 	if (!task)
 		goto out_no_task;
 
-	mm = get_task_mm(task);
+	mm = get_task_mm(task, &mm_ref);
 	if (!mm)
 		goto out_no_mm;
 	ret = 0;
@@ -2622,7 +2653,7 @@ static ssize_t proc_coredump_filter_write(struct file *file,
 			clear_bit(i + MMF_DUMP_FILTER_SHIFT, &mm->flags);
 	}
 
-	mmput(mm);
+	mmput(mm, &mm_ref);
  out_no_mm:
 	put_task_struct(task);
  out_no_task:

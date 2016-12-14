@@ -2771,7 +2771,7 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 
 	fire_sched_in_preempt_notifiers(current);
 	if (mm)
-		mmdrop(mm);
+		mmdrop(mm, &rq->prev_mm_ref);
 	if (unlikely(prev_state == TASK_DEAD)) {
 		if (prev->sched_class->task_dead)
 			prev->sched_class->task_dead(prev);
@@ -2877,12 +2877,14 @@ context_switch(struct rq *rq, struct task_struct *prev,
 
 	if (!mm) {
 		next->active_mm = oldmm;
-		mmgrab(oldmm);
+		mmgrab(oldmm, &next->mm_ref);
 		enter_lazy_tlb(oldmm, next);
 	} else
 		switch_mm_irqs_off(oldmm, mm, next);
 
 	if (!prev->mm) {
+		if (oldmm)
+			move_mm_ref(oldmm, &prev->mm_ref, &rq->prev_mm_ref);
 		prev->active_mm = NULL;
 		rq->prev_mm = oldmm;
 	}
@@ -5472,7 +5474,7 @@ void idle_task_exit(void)
 		switch_mm_irqs_off(mm, &init_mm, current);
 		finish_arch_post_lock_switch();
 	}
-	mmdrop(mm);
+	mmdrop(mm, &current->mm_ref);
 }
 
 /*
@@ -7640,6 +7642,10 @@ void __init sched_init(void)
 		rq->balance_callback = NULL;
 		rq->active_balance = 0;
 		rq->next_balance = jiffies;
+
+		BUG_ON(rq->prev_mm != NULL);
+		INIT_MM_REF(&rq->prev_mm_ref);
+
 		rq->push_cpu = 0;
 		rq->cpu = i;
 		rq->online = 0;
@@ -7667,7 +7673,7 @@ void __init sched_init(void)
 	/*
 	 * The boot idle thread does lazy MMU switching as well:
 	 */
-	mmgrab(&init_mm);
+	mmgrab(&init_mm, &init_mm_ref);
 	enter_lazy_tlb(&init_mm, current);
 
 	/*

@@ -636,6 +636,7 @@ struct rq {
 	struct task_struct *curr, *idle, *stop;
 	unsigned long next_balance;
 	struct mm_struct *prev_mm;
+	struct mm_ref prev_mm_ref;
 
 	unsigned int clock_skip_update;
 	u64 clock;

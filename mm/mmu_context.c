@@ -20,12 +20,14 @@
 void use_mm(struct mm_struct *mm)
 {
 	struct mm_struct *active_mm;
+	struct mm_ref active_mm_ref;
 	struct task_struct *tsk = current;
 
 	task_lock(tsk);
 	active_mm = tsk->active_mm;
 	if (active_mm != mm) {
-		mmgrab(mm);
+		move_mm_ref(mm, &tsk->mm_ref, &active_mm_ref);
+		mmgrab(mm, &tsk->mm_ref);
 		tsk->active_mm = mm;
 	}
 	tsk->mm = mm;
@@ -35,8 +37,9 @@ void use_mm(struct mm_struct *mm)
 	finish_arch_post_lock_switch();
 #endif
 
-	if (active_mm != mm)
-		mmdrop(active_mm);
+	if (active_mm != mm) {
+		mmdrop(active_mm, &active_mm_ref);
+	}
 }
 EXPORT_SYMBOL_GPL(use_mm);
 

@@ -607,7 +607,8 @@ int get_cmdline(struct task_struct *task, char *buffer, int buflen)
 {
 	int res = 0;
 	unsigned int len;
-	struct mm_struct *mm = get_task_mm(task);
+	MM_REF(mm_ref);
+	struct mm_struct *mm = get_task_mm(task, &mm_ref);
 	unsigned long arg_start, arg_end, env_start, env_end;
 	if (!mm)
 		goto out;
@@ -647,7 +648,7 @@ int get_cmdline(struct task_struct *task, char *buffer, int buflen)
 		}
 	}
 out_mm:
-	mmput(mm);
+	mmput(mm, &mm_ref);
 out:
 	return res;
 }

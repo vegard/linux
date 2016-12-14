@@ -380,7 +380,7 @@ static int bprm_mm_init(struct linux_binprm *bprm)
 	int err;
 	struct mm_struct *mm = NULL;
 
-	bprm->mm = mm = mm_alloc();
+	bprm->mm = mm = mm_alloc(&bprm->mm_ref);
 	err = -ENOMEM;
 	if (!mm)
 		goto err;
@@ -394,7 +394,7 @@ static int bprm_mm_init(struct linux_binprm *bprm)
 err:
 	if (mm) {
 		bprm->mm = NULL;
-		mmdrop(mm);
+		mmdrop(mm, &bprm->mm_ref);
 	}
 
 	return err;
@@ -996,6 +996,8 @@ static int exec_mmap(struct mm_struct *mm)
 {
 	struct task_struct *tsk;
 	struct mm_struct *old_mm, *active_mm;
+	MM_REF(old_mm_ref);
+	MM_REF(active_mm_ref);
 
 	/* Notify parent that we're no longer interested in the old VM */
 	tsk = current;
@@ -1015,9 +1017,14 @@ static int exec_mmap(struct mm_struct *mm)
 			up_read(&old_mm->mmap_sem);
 			return -EINTR;
 		}
+
+		move_mm_users_ref(old_mm, &current->mm_ref, &old_mm_ref);
 	}
 	task_lock(tsk);
+
 	active_mm = tsk->active_mm;
+	if (!old_mm)
+		move_mm_ref(active_mm, &tsk->mm_ref, &active_mm_ref);
 	tsk->mm = mm;
 	tsk->active_mm = mm;
 	activate_mm(active_mm, mm);
@@ -1029,10 +1036,10 @@ static int exec_mmap(struct mm_struct *mm)
 		BUG_ON(active_mm != old_mm);
 		setmax_mm_hiwater_rss(&tsk->signal->maxrss, old_mm);
 		mm_update_next_owner(old_mm);
-		mmput(old_mm);
+		mmput(old_mm, &old_mm_ref);
 		return 0;
 	}
-	mmdrop(active_mm);
+	mmdrop(active_mm, &active_mm_ref);
 	return 0;
 }
 
@@ -1258,6 +1265,7 @@ int flush_old_exec(struct linux_binprm * bprm)
 	if (retval)
 		goto out;
 
+	move_mm_ref(bprm->mm, &bprm->mm_ref, &current->mm_ref);
 	bprm->mm = NULL;		/* We're using it now */
 
 	set_fs(USER_DS);
@@ -1674,6 +1682,8 @@ static int do_execveat_common(int fd, struct filename *filename,
 	if (!bprm)
 		goto out_files;
 
+	INIT_MM_REF(&bprm->mm_ref);
+
 	retval = prepare_bprm_creds(bprm);
 	if (retval)
 		goto out_free;
@@ -1760,7 +1770,7 @@ static int do_execveat_common(int fd, struct filename *filename,
 out:
 	if (bprm->mm) {
 		acct_arg_size(bprm, 0);
-		mmput(bprm->mm);
+		mmput(bprm->mm, &bprm->mm_ref);
 	}
 
 out_unmark:

@@ -1376,6 +1376,7 @@ int try_to_unuse(unsigned int type, bool frontswap,
 {
 	struct swap_info_struct *si = swap_info[type];
 	struct mm_struct *start_mm;
+	MM_REF(start_mm_ref);
 	volatile unsigned char *swap_map; /* swap_map is accessed without
 					   * locking. Mark it as volatile
 					   * to prevent compiler doing
@@ -1402,7 +1403,7 @@ int try_to_unuse(unsigned int type, bool frontswap,
 	 * that.
 	 */
 	start_mm = &init_mm;
-	mmget(&init_mm);
+	mmget(&init_mm, &start_mm_ref);
 
 	/*
 	 * Keep on scanning until all entries have gone.  Usually,
@@ -1449,9 +1450,9 @@ int try_to_unuse(unsigned int type, bool frontswap,
 		 * Don't hold on to start_mm if it looks like exiting.
 		 */
 		if (atomic_read(&start_mm->mm_users) == 1) {
-			mmput(start_mm);
+			mmput(start_mm, &start_mm_ref);
 			start_mm = &init_mm;
-			mmget(&init_mm);
+			mmget(&init_mm, &start_mm_ref);
 		}
 
 		/*
@@ -1485,19 +1486,22 @@ int try_to_unuse(unsigned int type, bool frontswap,
 			int set_start_mm = (*swap_map >= swcount);
 			struct list_head *p = &start_mm->mmlist;
 			struct mm_struct *new_start_mm = start_mm;
+			MM_REF(new_start_mm_ref);
 			struct mm_struct *prev_mm = start_mm;
+			MM_REF(prev_mm_ref);
 			struct mm_struct *mm;
+			MM_REF(mm_ref);
 
-			mmget(new_start_mm);
-			mmget(prev_mm);
+			mmget(new_start_mm, &new_start_mm_ref);
+			mmget(prev_mm, &prev_mm_ref);
 			spin_lock(&mmlist_lock);
 			while (swap_count(*swap_map) && !retval &&
 					(p = p->next) != &start_mm->mmlist) {
 				mm = list_entry(p, struct mm_struct, mmlist);
-				if (!mmget_not_zero(mm))
+				if (!mmget_not_zero(mm, &mm_ref))
 					continue;
 				spin_unlock(&mmlist_lock);
-				mmput(prev_mm);
+				mmput(prev_mm, &prev_mm_ref);
 				prev_mm = mm;
 
 				cond_resched();
@@ -1511,17 +1515,18 @@ int try_to_unuse(unsigned int type, bool frontswap,
 					retval = unuse_mm(mm, entry, page);
 
 				if (set_start_mm && *swap_map < swcount) {
-					mmput(new_start_mm);
-					mmget(mm);
+					mmput(new_start_mm, &new_start_mm_ref);
+					mmget(mm, &mm_ref);
 					new_start_mm = mm;
 					set_start_mm = 0;
 				}
 				spin_lock(&mmlist_lock);
 			}
 			spin_unlock(&mmlist_lock);
-			mmput(prev_mm);
-			mmput(start_mm);
+			mmput(prev_mm, &prev_mm_ref);
+			mmput(start_mm, &start_mm_ref);
 			start_mm = new_start_mm;
+			move_mm_users_ref(start_mm, &new_start_mm_ref, &start_mm_ref);
 		}
 		if (retval) {
 			unlock_page(page);
@@ -1590,7 +1595,7 @@ int try_to_unuse(unsigned int type, bool frontswap,
 		}
 	}
 
-	mmput(start_mm);
+	mmput(start_mm, &start_mm_ref);
 	return retval;
 }
 

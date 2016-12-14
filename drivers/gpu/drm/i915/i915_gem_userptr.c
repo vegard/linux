@@ -34,8 +34,10 @@
 
 struct i915_mm_struct {
 	struct mm_struct *mm;
+	struct mm_ref mm_ref;
 	struct drm_i915_private *i915;
 	struct i915_mmu_notifier *mn;
+	struct mm_ref mn_ref;
 	struct hlist_node node;
 	struct kref kref;
 	struct work_struct work;
@@ -159,7 +161,7 @@ static const struct mmu_notifier_ops i915_gem_userptr_notifier = {
 };
 
 static struct i915_mmu_notifier *
-i915_mmu_notifier_create(struct mm_struct *mm)
+i915_mmu_notifier_create(struct mm_struct *mm, struct mm_ref *mm_ref)
 {
 	struct i915_mmu_notifier *mn;
 	int ret;
@@ -178,7 +180,7 @@ i915_mmu_notifier_create(struct mm_struct *mm)
 	}
 
 	 /* Protected by mmap_sem (write-lock) */
-	ret = __mmu_notifier_register(&mn->mn, mm);
+	ret = __mmu_notifier_register(&mn->mn, mm, mm_ref);
 	if (ret) {
 		destroy_workqueue(mn->wq);
 		kfree(mn);
@@ -217,7 +219,7 @@ i915_mmu_notifier_find(struct i915_mm_struct *mm)
 	down_write(&mm->mm->mmap_sem);
 	mutex_lock(&mm->i915->mm_lock);
 	if ((mn = mm->mn) == NULL) {
-		mn = i915_mmu_notifier_create(mm->mm);
+		mn = i915_mmu_notifier_create(mm->mm, &mm->mn_ref);
 		if (!IS_ERR(mn))
 			mm->mn = mn;
 	}
@@ -260,12 +262,12 @@ i915_gem_userptr_init__mmu_notifier(struct drm_i915_gem_object *obj,
 
 static void
 i915_mmu_notifier_free(struct i915_mmu_notifier *mn,
-		       struct mm_struct *mm)
+		       struct mm_struct *mm, struct mm_ref *mm_ref)
 {
 	if (mn == NULL)
 		return;
 
-	mmu_notifier_unregister(&mn->mn, mm);
+	mmu_notifier_unregister(&mn->mn, mm, mm_ref);
 	destroy_workqueue(mn->wq);
 	kfree(mn);
 }
@@ -341,9 +343,11 @@ i915_gem_userptr_init__mm_struct(struct drm_i915_gem_object *obj)
 		mm->i915 = to_i915(obj->base.dev);
 
 		mm->mm = current->mm;
-		mmgrab(current->mm);
+		INIT_MM_REF(&mm->mm_ref);
+		mmgrab(current->mm, &mm->mm_ref);
 
 		mm->mn = NULL;
+		INIT_MM_REF(&mm->mn_ref);
 
 		/* Protected by dev_priv->mm_lock */
 		hash_add(dev_priv->mm_structs,
@@ -361,8 +365,8 @@ static void
 __i915_mm_struct_free__worker(struct work_struct *work)
 {
 	struct i915_mm_struct *mm = container_of(work, typeof(*mm), work);
-	i915_mmu_notifier_free(mm->mn, mm->mm);
-	mmdrop(mm->mm);
+	i915_mmu_notifier_free(mm->mn, mm->mm, &mm->mn_ref);
+	mmdrop(mm->mm, &mm->mm_ref);
 	kfree(mm);
 }
 
@@ -508,13 +512,14 @@ __i915_gem_userptr_get_pages_worker(struct work_struct *_work)
 	pvec = drm_malloc_gfp(npages, sizeof(struct page *), GFP_TEMPORARY);
 	if (pvec != NULL) {
 		struct mm_struct *mm = obj->userptr.mm->mm;
+		MM_REF(mm_ref);
 		unsigned int flags = 0;
 
 		if (!obj->userptr.read_only)
 			flags |= FOLL_WRITE;
 
 		ret = -EFAULT;
-		if (mmget_not_zero(mm)) {
+		if (mmget_not_zero(mm, &mm_ref)) {
 			down_read(&mm->mmap_sem);
 			while (pinned < npages) {
 				ret = get_user_pages_remote
@@ -529,7 +534,7 @@ __i915_gem_userptr_get_pages_worker(struct work_struct *_work)
 				pinned += ret;
 			}
 			up_read(&mm->mmap_sem);
-			mmput(mm);
+			mmput(mm, &mm_ref);
 		}
 	}
 

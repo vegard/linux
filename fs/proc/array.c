@@ -367,14 +367,15 @@ static void task_cpus_allowed(struct seq_file *m, struct task_struct *task)
 int proc_pid_status(struct seq_file *m, struct pid_namespace *ns,
 			struct pid *pid, struct task_struct *task)
 {
-	struct mm_struct *mm = get_task_mm(task);
+	MM_REF(mm_ref);
+	struct mm_struct *mm = get_task_mm(task, &mm_ref);
 
 	task_name(m, task);
 	task_state(m, ns, pid, task);
 
 	if (mm) {
 		task_mem(m, mm);
-		mmput(mm);
+		mmput(mm, &mm_ref);
 	}
 	task_sig(m, task);
 	task_cap(m, task);
@@ -397,6 +398,7 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	int num_threads = 0;
 	int permitted;
 	struct mm_struct *mm;
+	MM_REF(mm_ref);
 	unsigned long long start_time;
 	unsigned long cmin_flt = 0, cmaj_flt = 0;
 	unsigned long  min_flt = 0,  maj_flt = 0;
@@ -409,7 +411,7 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	state = *get_task_state(task);
 	vsize = eip = esp = 0;
 	permitted = ptrace_may_access(task, PTRACE_MODE_READ_FSCREDS | PTRACE_MODE_NOAUDIT);
-	mm = get_task_mm(task);
+	mm = get_task_mm(task, &mm_ref);
 	if (mm) {
 		vsize = task_vsize(mm);
 		/*
@@ -562,7 +564,7 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 
 	seq_putc(m, '\n');
 	if (mm)
-		mmput(mm);
+		mmput(mm, &mm_ref);
 	return 0;
 }
 
@@ -582,11 +584,12 @@ int proc_pid_statm(struct seq_file *m, struct pid_namespace *ns,
 			struct pid *pid, struct task_struct *task)
 {
 	unsigned long size = 0, resident = 0, shared = 0, text = 0, data = 0;
-	struct mm_struct *mm = get_task_mm(task);
+	MM_REF(mm_ref);
+	struct mm_struct *mm = get_task_mm(task, &mm_ref);
 
 	if (mm) {
 		size = task_statm(mm, &shared, &text, &data, &resident);
-		mmput(mm);
+		mmput(mm, &mm_ref);
 	}
 	/*
 	 * For quick read, open code by putting numbers directly

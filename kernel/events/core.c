@@ -7965,6 +7965,7 @@ static void perf_event_addr_filters_apply(struct perf_event *event)
 	struct task_struct *task = READ_ONCE(event->ctx->task);
 	struct perf_addr_filter *filter;
 	struct mm_struct *mm = NULL;
+	MM_REF(mm_ref);
 	unsigned int count = 0;
 	unsigned long flags;
 
@@ -7975,7 +7976,7 @@ static void perf_event_addr_filters_apply(struct perf_event *event)
 	if (task == TASK_TOMBSTONE)
 		return;
 
-	mm = get_task_mm(event->ctx->task);
+	mm = get_task_mm(event->ctx->task, &mm_ref);
 	if (!mm)
 		goto restart;
 
@@ -8001,7 +8002,7 @@ static void perf_event_addr_filters_apply(struct perf_event *event)
 
 	up_read(&mm->mmap_sem);
 
-	mmput(mm);
+	mmput(mm, &mm_ref);
 
 restart:
 	perf_event_stop(event, 1);

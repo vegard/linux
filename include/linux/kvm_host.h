@@ -174,6 +174,7 @@ struct kvm_async_pf {
 	struct list_head queue;
 	struct kvm_vcpu *vcpu;
 	struct mm_struct *mm;
+	struct mm_ref mm_ref;
 	gva_t gva;
 	unsigned long addr;
 	struct kvm_arch_async_pf arch;
@@ -376,6 +377,7 @@ struct kvm {
 	spinlock_t mmu_lock;
 	struct mutex slots_lock;
 	struct mm_struct *mm; /* userspace tied to this vm */
+	struct mm_ref mm_ref;
 	struct kvm_memslots *memslots[KVM_ADDRESS_SPACE_NUM];
 	struct srcu_struct srcu;
 	struct srcu_struct irq_srcu;
@@ -424,6 +426,7 @@ struct kvm {
 
 #if defined(CONFIG_MMU_NOTIFIER) && defined(KVM_ARCH_WANT_MMU_NOTIFIER)
 	struct mmu_notifier mmu_notifier;
+	struct mm_ref mmu_notifier_ref;
 	unsigned long mmu_notifier_seq;
 	long mmu_notifier_count;
 #endif

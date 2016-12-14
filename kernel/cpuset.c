@@ -994,6 +994,7 @@ static int update_cpumask(struct cpuset *cs, struct cpuset *trialcs,
 struct cpuset_migrate_mm_work {
 	struct work_struct	work;
 	struct mm_struct	*mm;
+	struct mm_ref		mm_ref;
 	nodemask_t		from;
 	nodemask_t		to;
 };
@@ -1005,24 +1006,25 @@ static void cpuset_migrate_mm_workfn(struct work_struct *work)
 
 	/* on a wq worker, no need to worry about %current's mems_allowed */
 	do_migrate_pages(mwork->mm, &mwork->from, &mwork->to, MPOL_MF_MOVE_ALL);
-	mmput(mwork->mm);
+	mmput(mwork->mm, &mwork->mm_ref);
 	kfree(mwork);
 }
 
 static void cpuset_migrate_mm(struct mm_struct *mm, const nodemask_t *from,
-							const nodemask_t *to)
+							const nodemask_t *to, struct mm_ref *mm_ref)
 {
 	struct cpuset_migrate_mm_work *mwork;
 
 	mwork = kzalloc(sizeof(*mwork), GFP_KERNEL);
 	if (mwork) {
 		mwork->mm = mm;
+		move_mm_users_ref(mm, mm_ref, &mwork->mm_ref);
 		mwork->from = *from;
 		mwork->to = *to;
 		INIT_WORK(&mwork->work, cpuset_migrate_mm_workfn);
 		queue_work(cpuset_migrate_mm_wq, &mwork->work);
 	} else {
-		mmput(mm);
+		mmput(mm, mm_ref);
 	}
 }
 
@@ -1107,11 +1109,12 @@ static void update_tasks_nodemask(struct cpuset *cs)
 	css_task_iter_start(&cs->css, &it);
 	while ((task = css_task_iter_next(&it))) {
 		struct mm_struct *mm;
+		MM_REF(mm_ref);
 		bool migrate;
 
 		cpuset_change_task_nodemask(task, &newmems);
 
-		mm = get_task_mm(task);
+		mm = get_task_mm(task, &mm_ref);
 		if (!mm)
 			continue;
 
@@ -1119,9 +1122,9 @@ static void update_tasks_nodemask(struct cpuset *cs)
 
 		mpol_rebind_mm(mm, &cs->mems_allowed);
 		if (migrate)
-			cpuset_migrate_mm(mm, &cs->old_mems_allowed, &newmems);
+			cpuset_migrate_mm(mm, &cs->old_mems_allowed, &newmems, &mm_ref);
 		else
-			mmput(mm);
+			mmput(mm, &mm_ref);
 	}
 	css_task_iter_end(&it);
 
@@ -1556,7 +1559,8 @@ static void cpuset_attach(struct cgroup_taskset *tset)
 	 */
 	cpuset_attach_nodemask_to = cs->effective_mems;
 	cgroup_taskset_for_each_leader(leader, css, tset) {
-		struct mm_struct *mm = get_task_mm(leader);
+		MM_REF(mm_ref);
+		struct mm_struct *mm = get_task_mm(leader, &mm_ref);
 
 		if (mm) {
 			mpol_rebind_mm(mm, &cpuset_attach_nodemask_to);
@@ -1571,9 +1575,9 @@ static void cpuset_attach(struct cgroup_taskset *tset)
 			 */
 			if (is_memory_migrate(cs))
 				cpuset_migrate_mm(mm, &oldcs->old_mems_allowed,
-						  &cpuset_attach_nodemask_to);
+						  &cpuset_attach_nodemask_to, &mm_ref);
 			else
-				mmput(mm);
+				mmput(mm, &mm_ref);
 		}
 	}
 

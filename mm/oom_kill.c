@@ -463,6 +463,7 @@ static DEFINE_SPINLOCK(oom_reaper_lock);
 
 static bool __oom_reap_task_mm(struct task_struct *tsk, struct mm_struct *mm)
 {
+	MM_REF(mm_ref);
 	struct mmu_gather tlb;
 	struct vm_area_struct *vma;
 	struct zap_details details = {.check_swap_entries = true,
@@ -495,7 +496,7 @@ static bool __oom_reap_task_mm(struct task_struct *tsk, struct mm_struct *mm)
 	 * that the mmput_async is called only when we have reaped something
 	 * and delayed __mmput doesn't matter that much
 	 */
-	if (!mmget_not_zero(mm)) {
+	if (!mmget_not_zero(mm, &mm_ref)) {
 		up_read(&mm->mmap_sem);
 		goto unlock_oom;
 	}
@@ -547,7 +548,7 @@ static bool __oom_reap_task_mm(struct task_struct *tsk, struct mm_struct *mm)
 	 * different context because we shouldn't risk we get stuck there and
 	 * put the oom_reaper out of the way.
 	 */
-	mmput_async(mm);
+	mmput_async(mm, &mm_ref);
 unlock_oom:
 	mutex_unlock(&oom_lock);
 	return ret;
@@ -660,7 +661,7 @@ static void mark_oom_victim(struct task_struct *tsk)
 
 	/* oom_mm is bound to the signal struct life time. */
 	if (!cmpxchg(&tsk->signal->oom_mm, NULL, mm))
-		mmgrab(tsk->signal->oom_mm);
+		mmgrab(tsk->signal->oom_mm, &tsk->signal->oom_mm_ref);
 
 	/*
 	 * Make sure that the task is woken up from uninterruptible sleep
@@ -812,6 +813,7 @@ static void oom_kill_process(struct oom_control *oc, const char *message)
 	struct task_struct *child;
 	struct task_struct *t;
 	struct mm_struct *mm;
+	MM_REF(mm_ref);
 	unsigned int victim_points = 0;
 	static DEFINE_RATELIMIT_STATE(oom_rs, DEFAULT_RATELIMIT_INTERVAL,
 					      DEFAULT_RATELIMIT_BURST);
@@ -877,7 +879,7 @@ static void oom_kill_process(struct oom_control *oc, const char *message)
 
 	/* Get a reference to safely compare mm after task_unlock(victim) */
 	mm = victim->mm;
-	mmgrab(mm);
+	mmgrab(mm, &mm_ref);
 	/*
 	 * We should send SIGKILL before setting TIF_MEMDIE in order to prevent
 	 * the OOM victim from depleting the memory reserves from the user
@@ -928,7 +930,7 @@ static void oom_kill_process(struct oom_control *oc, const char *message)
 	if (can_oom_reap)
 		wake_oom_reaper(victim);
 
-	mmdrop(mm);
+	mmdrop(mm, &mm_ref);
 	put_task_struct(victim);
 }
 #undef K

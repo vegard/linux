@@ -133,7 +133,7 @@ static void vma_stop(struct proc_maps_private *priv)
 
 	release_task_mempolicy(priv);
 	up_read(&mm->mmap_sem);
-	mmput(mm);
+	mmput(mm, &priv->mm_start_ref);
 }
 
 static struct vm_area_struct *
@@ -167,7 +167,7 @@ static void *m_start(struct seq_file *m, loff_t *ppos)
 		return ERR_PTR(-ESRCH);
 
 	mm = priv->mm;
-	if (!mm || !mmget_not_zero(mm))
+	if (!mm || !mmget_not_zero(mm, &priv->mm_start_ref))
 		return NULL;
 
 	down_read(&mm->mmap_sem);
@@ -232,7 +232,9 @@ static int proc_maps_open(struct inode *inode, struct file *file,
 		return -ENOMEM;
 
 	priv->inode = inode;
-	priv->mm = proc_mem_open(inode, PTRACE_MODE_READ);
+	INIT_MM_REF(&priv->mm_open_ref);
+	INIT_MM_REF(&priv->mm_start_ref);
+	priv->mm = proc_mem_open(inode, PTRACE_MODE_READ, &priv->mm_open_ref);
 	if (IS_ERR(priv->mm)) {
 		int err = PTR_ERR(priv->mm);
 
@@ -249,7 +251,7 @@ static int proc_map_release(struct inode *inode, struct file *file)
 	struct proc_maps_private *priv = seq->private;
 
 	if (priv->mm)
-		mmdrop(priv->mm);
+		mmdrop(priv->mm, &priv->mm_open_ref);
 
 	return seq_release_private(inode, file);
 }
@@ -997,6 +999,7 @@ static ssize_t clear_refs_write(struct file *file, const char __user *buf,
 	struct task_struct *task;
 	char buffer[PROC_NUMBUF];
 	struct mm_struct *mm;
+	MM_REF(mm_ref);
 	struct vm_area_struct *vma;
 	enum clear_refs_types type;
 	int itype;
@@ -1017,7 +1020,7 @@ static ssize_t clear_refs_write(struct file *file, const char __user *buf,
 	task = get_proc_task(file_inode(file));
 	if (!task)
 		return -ESRCH;
-	mm = get_task_mm(task);
+	mm = get_task_mm(task, &mm_ref);
 	if (mm) {
 		struct clear_refs_private cp = {
 			.type = type,
@@ -1069,7 +1072,7 @@ static ssize_t clear_refs_write(struct file *file, const char __user *buf,
 		flush_tlb_mm(mm);
 		up_read(&mm->mmap_sem);
 out_mm:
-		mmput(mm);
+		mmput(mm, &mm_ref);
 	}
 	put_task_struct(task);
 
@@ -1340,10 +1343,17 @@ static int pagemap_hugetlb_range(pte_t *ptep, unsigned long hmask,
  * determine which areas of memory are actually mapped and llseek to
  * skip over unmapped regions.
  */
+struct pagemap_private {
+	struct mm_struct *mm;
+	struct mm_ref mm_ref;
+};
+
 static ssize_t pagemap_read(struct file *file, char __user *buf,
 			    size_t count, loff_t *ppos)
 {
-	struct mm_struct *mm = file->private_data;
+	struct pagemap_private *priv = file->private_data;
+	struct mm_struct *mm = priv->mm;
+	MM_REF(mm_ref);
 	struct pagemapread pm;
 	struct mm_walk pagemap_walk = {};
 	unsigned long src;
@@ -1352,7 +1362,7 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
 	unsigned long end_vaddr;
 	int ret = 0, copied = 0;
 
-	if (!mm || !mmget_not_zero(mm))
+	if (!mm || !mmget_not_zero(mm, &mm_ref))
 		goto out;
 
 	ret = -EINVAL;
@@ -1427,28 +1437,40 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
 out_free:
 	kfree(pm.buffer);
 out_mm:
-	mmput(mm);
+	mmput(mm, &mm_ref);
 out:
 	return ret;
 }
 
 static int pagemap_open(struct inode *inode, struct file *file)
 {
+	struct pagemap_private *priv;
 	struct mm_struct *mm;
 
-	mm = proc_mem_open(inode, PTRACE_MODE_READ);
-	if (IS_ERR(mm))
+	priv = kmalloc(sizeof(struct pagemap_private), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+
+	mm = proc_mem_open(inode, PTRACE_MODE_READ, &priv->mm_ref);
+	if (IS_ERR(mm)) {
+		kfree(priv);
 		return PTR_ERR(mm);
-	file->private_data = mm;
+	}
+
+	priv->mm = mm;
+	file->private_data = priv;
 	return 0;
 }
 
 static int pagemap_release(struct inode *inode, struct file *file)
 {
-	struct mm_struct *mm = file->private_data;
+	struct pagemap_private *priv = file->private_data;
+	struct mm_struct *mm = priv->mm;
 
 	if (mm)
-		mmdrop(mm);
+		mmdrop(mm, &priv->mm_ref);
+
+	kfree(priv);
 	return 0;
 }
 

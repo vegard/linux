@@ -367,7 +367,7 @@ static inline void free_signal_struct(struct signal_struct *sig)
 	 * pgd_dtor so postpone it to the async context
 	 */
 	if (sig->oom_mm)
-		mmdrop_async(sig->oom_mm);
+		mmdrop_async(sig->oom_mm, &sig->oom_mm_ref);
 	kmem_cache_free(signal_cachep, sig);
 }
 
@@ -745,13 +745,22 @@ static void mm_init_owner(struct mm_struct *mm, struct task_struct *p)
 #endif
 }
 
-static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p)
+static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p, struct mm_ref *mm_ref)
 {
 	mm->mmap = NULL;
 	mm->mm_rb = RB_ROOT;
 	mm->vmacache_seqnum = 0;
+
 	atomic_set(&mm->mm_users, 1);
+	INIT_LIST_HEAD(&mm->mm_users_list);
+	INIT_MM_REF(&mm->mm_users_ref);
+
 	atomic_set(&mm->mm_count, 1);
+	INIT_LIST_HEAD(&mm->mm_count_list);
+
+	get_mm_ref(mm, mm_ref);
+	get_mm_users_ref(mm, &mm->mm_users_ref);
+
 	init_rwsem(&mm->mmap_sem);
 	INIT_LIST_HEAD(&mm->mmlist);
 	mm->core_state = NULL;
@@ -821,7 +830,7 @@ static void check_mm(struct mm_struct *mm)
 /*
  * Allocate and initialize an mm_struct.
  */
-struct mm_struct *mm_alloc(void)
+struct mm_struct *mm_alloc(struct mm_ref *ref)
 {
 	struct mm_struct *mm;
 
@@ -830,7 +839,7 @@ struct mm_struct *mm_alloc(void)
 		return NULL;
 
 	memset(mm, 0, sizeof(*mm));
-	return mm_init(mm, current);
+	return mm_init(mm, current, ref);
 }
 
 /*
@@ -868,16 +877,17 @@ static inline void __mmput(struct mm_struct *mm)
 	if (mm->binfmt)
 		module_put(mm->binfmt->module);
 	set_bit(MMF_OOM_SKIP, &mm->flags);
-	mmdrop(mm);
+	mmdrop(mm, &mm->mm_users_ref);
 }
 
 /*
  * Decrement the use count and release all resources for an mm.
  */
-void mmput(struct mm_struct *mm)
+void mmput(struct mm_struct *mm, struct mm_ref *ref)
 {
 	might_sleep();
 
+	put_mm_users_ref(mm, ref);
 	if (atomic_dec_and_test(&mm->mm_users))
 		__mmput(mm);
 }
@@ -890,8 +900,9 @@ static void mmput_async_fn(struct work_struct *work)
 	__mmput(mm);
 }
 
-void mmput_async(struct mm_struct *mm)
+void mmput_async(struct mm_struct *mm, struct mm_ref *ref)
 {
+	put_mm_users_ref(mm, ref);
 	if (atomic_dec_and_test(&mm->mm_users)) {
 		INIT_WORK(&mm->async_put_work, mmput_async_fn);
 		schedule_work(&mm->async_put_work);
@@ -979,7 +990,7 @@ EXPORT_SYMBOL(get_task_exe_file);
  * bumping up the use count.  User must release the mm via mmput()
  * after use.  Typically used by /proc and ptrace.
  */
-struct mm_struct *get_task_mm(struct task_struct *task)
+struct mm_struct *get_task_mm(struct task_struct *task, struct mm_ref *mm_ref)
 {
 	struct mm_struct *mm;
 
@@ -989,14 +1000,14 @@ struct mm_struct *get_task_mm(struct task_struct *task)
 		if (task->flags & PF_KTHREAD)
 			mm = NULL;
 		else
-			mmget(mm);
+			mmget(mm, mm_ref);
 	}
 	task_unlock(task);
 	return mm;
 }
 EXPORT_SYMBOL_GPL(get_task_mm);
 
-struct mm_struct *mm_access(struct task_struct *task, unsigned int mode)
+struct mm_struct *mm_access(struct task_struct *task, unsigned int mode, struct mm_ref *mm_ref)
 {
 	struct mm_struct *mm;
 	int err;
@@ -1005,10 +1016,10 @@ struct mm_struct *mm_access(struct task_struct *task, unsigned int mode)
 	if (err)
 		return ERR_PTR(err);
 
-	mm = get_task_mm(task);
+	mm = get_task_mm(task, mm_ref);
 	if (mm && mm != current->mm &&
 			!ptrace_may_access(task, mode)) {
-		mmput(mm);
+		mmput(mm, mm_ref);
 		mm = ERR_PTR(-EACCES);
 	}
 	mutex_unlock(&task->signal->cred_guard_mutex);
@@ -1115,7 +1126,7 @@ void mm_release(struct task_struct *tsk, struct mm_struct *mm)
  * Allocate a new mm structure and copy contents from the
  * mm structure of the passed in task structure.
  */
-static struct mm_struct *dup_mm(struct task_struct *tsk)
+static struct mm_struct *dup_mm(struct task_struct *tsk, struct mm_ref *ref)
 {
 	struct mm_struct *mm, *oldmm = current->mm;
 	int err;
@@ -1126,7 +1137,7 @@ static struct mm_struct *dup_mm(struct task_struct *tsk)
 
 	memcpy(mm, oldmm, sizeof(*mm));
 
-	if (!mm_init(mm, tsk))
+	if (!mm_init(mm, tsk, ref))
 		goto fail_nomem;
 
 	err = dup_mmap(mm, oldmm);
@@ -1144,7 +1155,7 @@ static struct mm_struct *dup_mm(struct task_struct *tsk)
 free_pt:
 	/* don't put binfmt in mmput, we haven't got module yet */
 	mm->binfmt = NULL;
-	mmput(mm);
+	mmput(mm, ref);
 
 fail_nomem:
 	return NULL;
@@ -1163,6 +1174,7 @@ static int copy_mm(unsigned long clone_flags, struct task_struct *tsk)
 
 	tsk->mm = NULL;
 	tsk->active_mm = NULL;
+	INIT_MM_REF(&tsk->mm_ref);
 
 	/*
 	 * Are we cloning a kernel thread?
@@ -1177,13 +1189,13 @@ static int copy_mm(unsigned long clone_flags, struct task_struct *tsk)
 	vmacache_flush(tsk);
 
 	if (clone_flags & CLONE_VM) {
-		mmget(oldmm);
+		mmget(oldmm, &tsk->mm_ref);
 		mm = oldmm;
 		goto good_mm;
 	}
 
 	retval = -ENOMEM;
-	mm = dup_mm(tsk);
+	mm = dup_mm(tsk, &tsk->mm_ref);
 	if (!mm)
 		goto fail_nomem;
 
@@ -1359,6 +1371,9 @@ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
 
 	sig->oom_score_adj = current->signal->oom_score_adj;
 	sig->oom_score_adj_min = current->signal->oom_score_adj_min;
+
+	sig->oom_mm = NULL;
+	INIT_MM_REF(&sig->oom_mm_ref);
 
 	sig->has_child_subreaper = current->signal->has_child_subreaper ||
 				   current->signal->is_child_subreaper;
@@ -1839,7 +1854,7 @@ bad_fork_cleanup_namespaces:
 	exit_task_namespaces(p);
 bad_fork_cleanup_mm:
 	if (p->mm)
-		mmput(p->mm);
+		mmput(p->mm, &p->mm_ref);
 bad_fork_cleanup_signal:
 	if (!(clone_flags & CLONE_THREAD))
 		free_signal_struct(p->signal);

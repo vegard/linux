@@ -13,6 +13,7 @@
 #include <linux/uprobes.h>
 #include <linux/page-flags-layout.h>
 #include <linux/workqueue.h>
+#include <linux/mm_ref_types.h>
 #include <asm/page.h>
 #include <asm/mmu.h>
 
@@ -407,8 +408,14 @@ struct mm_struct {
 	unsigned long task_size;		/* size of task vm space */
 	unsigned long highest_vm_end;		/* highest vma end address */
 	pgd_t * pgd;
+
+	spinlock_t mm_refs_lock;		/* Protects mm_users_list and mm_count_list */
 	atomic_t mm_users;			/* How many users with user space? */
+	struct list_head mm_users_list;
+	struct mm_ref mm_users_ref;
 	atomic_t mm_count;			/* How many references to "struct mm_struct" (users count as 1) */
+	struct list_head mm_count_list;
+
 	atomic_long_t nr_ptes;			/* PTE page table pages */
 #if CONFIG_PGTABLE_LEVELS > 2
 	atomic_long_t nr_pmds;			/* PMD page table pages */
@@ -516,6 +523,7 @@ struct mm_struct {
 	atomic_long_t hugetlb_usage;
 #endif
 	struct work_struct async_put_work;
+	struct mm_ref async_put_ref;
 };
 
 static inline void mm_init_cpumask(struct mm_struct *mm)

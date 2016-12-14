@@ -1046,6 +1046,7 @@ static enum print_line_t trace_user_stack_print(struct trace_iterator *iter,
 	struct userstack_entry *field;
 	struct trace_seq *s = &iter->seq;
 	struct mm_struct *mm = NULL;
+	MM_REF(mm_ref);
 	unsigned int i;
 
 	trace_assign_type(field, iter->ent);
@@ -1061,7 +1062,7 @@ static enum print_line_t trace_user_stack_print(struct trace_iterator *iter,
 		rcu_read_lock();
 		task = find_task_by_vpid(field->tgid);
 		if (task)
-			mm = get_task_mm(task);
+			mm = get_task_mm(task, &mm_ref);
 		rcu_read_unlock();
 	}
 
@@ -1084,7 +1085,7 @@ static enum print_line_t trace_user_stack_print(struct trace_iterator *iter,
 	}
 
 	if (mm)
-		mmput(mm);
+		mmput(mm, &mm_ref);
 
 	return trace_handle_return(s);
 }

@@ -1374,6 +1374,7 @@ SYSCALL_DEFINE4(migrate_pages, pid_t, pid, unsigned long, maxnode,
 {
 	const struct cred *cred = current_cred(), *tcred;
 	struct mm_struct *mm = NULL;
+	MM_REF(mm_ref);
 	struct task_struct *task;
 	nodemask_t task_nodes;
 	int err;
@@ -1439,7 +1440,7 @@ SYSCALL_DEFINE4(migrate_pages, pid_t, pid, unsigned long, maxnode,
 	if (err)
 		goto out_put;
 
-	mm = get_task_mm(task);
+	mm = get_task_mm(task, &mm_ref);
 	put_task_struct(task);
 
 	if (!mm) {
@@ -1450,7 +1451,7 @@ SYSCALL_DEFINE4(migrate_pages, pid_t, pid, unsigned long, maxnode,
 	err = do_migrate_pages(mm, old, new,
 		capable(CAP_SYS_NICE) ? MPOL_MF_MOVE_ALL : MPOL_MF_MOVE);
 
-	mmput(mm);
+	mmput(mm, &mm_ref);
 out:
 	NODEMASK_SCRATCH_FREE(scratch);
 

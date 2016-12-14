@@ -240,6 +240,7 @@ struct futex_q {
 	struct task_struct *task;
 	spinlock_t *lock_ptr;
 	union futex_key key;
+	struct mm_ref mm_ref;
 	struct futex_pi_state *pi_state;
 	struct rt_mutex_waiter *rt_waiter;
 	union futex_key *requeue_pi_key;
@@ -249,6 +250,7 @@ struct futex_q {
 static const struct futex_q futex_q_init = {
 	/* list gets initialized in queue_me()*/
 	.key = FUTEX_KEY_INIT,
+	/* .mm_ref must be initialized for each futex_q */
 	.bitset = FUTEX_BITSET_MATCH_ANY
 };
 
@@ -336,9 +338,9 @@ static inline bool should_fail_futex(bool fshared)
 }
 #endif /* CONFIG_FAIL_FUTEX */
 
-static inline void futex_get_mm(union futex_key *key)
+static inline void futex_get_mm(union futex_key *key, struct mm_ref *ref)
 {
-	mmgrab(key->private.mm);
+	mmgrab(key->private.mm, ref);
 	/*
 	 * Ensure futex_get_mm() implies a full barrier such that
 	 * get_futex_key() implies a full barrier. This is relied upon
@@ -417,7 +419,7 @@ static inline int match_futex(union futex_key *key1, union futex_key *key2)
  * Can be called while holding spinlocks.
  *
  */
-static void get_futex_key_refs(union futex_key *key)
+static void get_futex_key_refs(union futex_key *key, struct mm_ref *ref)
 {
 	if (!key->both.ptr)
 		return;
@@ -437,7 +439,7 @@ static void get_futex_key_refs(union futex_key *key)
 		ihold(key->shared.inode); /* implies smp_mb(); (B) */
 		break;
 	case FUT_OFF_MMSHARED:
-		futex_get_mm(key); /* implies smp_mb(); (B) */
+		futex_get_mm(key, ref); /* implies smp_mb(); (B) */
 		break;
 	default:
 		/*
@@ -455,7 +457,7 @@ static void get_futex_key_refs(union futex_key *key)
  * a no-op for private futexes, see comment in the get
  * counterpart.
  */
-static void drop_futex_key_refs(union futex_key *key)
+static void drop_futex_key_refs(union futex_key *key, struct mm_ref *ref)
 {
 	if (!key->both.ptr) {
 		/* If we're here then we tried to put a key we failed to get */
@@ -471,7 +473,7 @@ static void drop_futex_key_refs(union futex_key *key)
 		iput(key->shared.inode);
 		break;
 	case FUT_OFF_MMSHARED:
-		mmdrop(key->private.mm);
+		mmdrop(key->private.mm, ref);
 		break;
 	}
 }
@@ -495,7 +497,7 @@ static void drop_futex_key_refs(union futex_key *key)
  * lock_page() might sleep, the caller should not hold a spinlock.
  */
 static int
-get_futex_key(u32 __user *uaddr, int fshared, union futex_key *key, int rw)
+get_futex_key(u32 __user *uaddr, int fshared, union futex_key *key, int rw, struct mm_ref *mm_ref)
 {
 	unsigned long address = (unsigned long)uaddr;
 	struct mm_struct *mm = current->mm;
@@ -527,7 +529,7 @@ get_futex_key(u32 __user *uaddr, int fshared, union futex_key *key, int rw)
 	if (!fshared) {
 		key->private.mm = mm;
 		key->private.address = address;
-		get_futex_key_refs(key);  /* implies smp_mb(); (B) */
+		get_futex_key_refs(key, mm_ref);  /* implies smp_mb(); (B) */
 		return 0;
 	}
 
@@ -630,7 +632,7 @@ again:
 		key->private.mm = mm;
 		key->private.address = address;
 
-		get_futex_key_refs(key); /* implies smp_mb(); (B) */
+		get_futex_key_refs(key, mm_ref); /* implies smp_mb(); (B) */
 
 	} else {
 		struct inode *inode;
@@ -701,9 +703,9 @@ out:
 	return err;
 }
 
-static inline void put_futex_key(union futex_key *key)
+static inline void put_futex_key(union futex_key *key, struct mm_ref *mm_ref)
 {
-	drop_futex_key_refs(key);
+	drop_futex_key_refs(key, mm_ref);
 }
 
 /**
@@ -1414,13 +1416,14 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 	struct futex_hash_bucket *hb;
 	struct futex_q *this, *next;
 	union futex_key key = FUTEX_KEY_INIT;
+	MM_REF(mm_ref);
 	int ret;
 	WAKE_Q(wake_q);
 
 	if (!bitset)
 		return -EINVAL;
 
-	ret = get_futex_key(uaddr, flags & FLAGS_SHARED, &key, VERIFY_READ);
+	ret = get_futex_key(uaddr, flags & FLAGS_SHARED, &key, VERIFY_READ, &mm_ref);
 	if (unlikely(ret != 0))
 		goto out;
 
@@ -1452,7 +1455,7 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 	spin_unlock(&hb->lock);
 	wake_up_q(&wake_q);
 out_put_key:
-	put_futex_key(&key);
+	put_futex_key(&key, &mm_ref);
 out:
 	return ret;
 }
@@ -1466,16 +1469,18 @@ futex_wake_op(u32 __user *uaddr1, unsigned int flags, u32 __user *uaddr2,
 	      int nr_wake, int nr_wake2, int op)
 {
 	union futex_key key1 = FUTEX_KEY_INIT, key2 = FUTEX_KEY_INIT;
+	MM_REF(mm_ref1);
+	MM_REF(mm_ref2);
 	struct futex_hash_bucket *hb1, *hb2;
 	struct futex_q *this, *next;
 	int ret, op_ret;
 	WAKE_Q(wake_q);
 
 retry:
-	ret = get_futex_key(uaddr1, flags & FLAGS_SHARED, &key1, VERIFY_READ);
+	ret = get_futex_key(uaddr1, flags & FLAGS_SHARED, &key1, VERIFY_READ, &mm_ref1);
 	if (unlikely(ret != 0))
 		goto out;
-	ret = get_futex_key(uaddr2, flags & FLAGS_SHARED, &key2, VERIFY_WRITE);
+	ret = get_futex_key(uaddr2, flags & FLAGS_SHARED, &key2, VERIFY_WRITE, &mm_ref2);
 	if (unlikely(ret != 0))
 		goto out_put_key1;
 
@@ -1510,8 +1515,8 @@ retry_private:
 		if (!(flags & FLAGS_SHARED))
 			goto retry_private;
 
-		put_futex_key(&key2);
-		put_futex_key(&key1);
+		put_futex_key(&key2, &mm_ref2);
+		put_futex_key(&key1, &mm_ref1);
 		goto retry;
 	}
 
@@ -1547,9 +1552,9 @@ out_unlock:
 	double_unlock_hb(hb1, hb2);
 	wake_up_q(&wake_q);
 out_put_keys:
-	put_futex_key(&key2);
+	put_futex_key(&key2, &mm_ref2);
 out_put_key1:
-	put_futex_key(&key1);
+	put_futex_key(&key1, &mm_ref1);
 out:
 	return ret;
 }
@@ -1563,7 +1568,7 @@ out:
  */
 static inline
 void requeue_futex(struct futex_q *q, struct futex_hash_bucket *hb1,
-		   struct futex_hash_bucket *hb2, union futex_key *key2)
+		   struct futex_hash_bucket *hb2, union futex_key *key2, struct mm_ref *mm_ref2)
 {
 
 	/*
@@ -1577,7 +1582,7 @@ void requeue_futex(struct futex_q *q, struct futex_hash_bucket *hb1,
 		plist_add(&q->list, &hb2->chain);
 		q->lock_ptr = &hb2->lock;
 	}
-	get_futex_key_refs(key2);
+	get_futex_key_refs(key2, mm_ref2);
 	q->key = *key2;
 }
 
@@ -1597,9 +1602,9 @@ void requeue_futex(struct futex_q *q, struct futex_hash_bucket *hb1,
  */
 static inline
 void requeue_pi_wake_futex(struct futex_q *q, union futex_key *key,
-			   struct futex_hash_bucket *hb)
+			   struct futex_hash_bucket *hb, struct mm_ref *ref)
 {
-	get_futex_key_refs(key);
+	get_futex_key_refs(key, ref);
 	q->key = *key;
 
 	__unqueue_futex(q);
@@ -1636,7 +1641,8 @@ static int futex_proxy_trylock_atomic(u32 __user *pifutex,
 				 struct futex_hash_bucket *hb1,
 				 struct futex_hash_bucket *hb2,
 				 union futex_key *key1, union futex_key *key2,
-				 struct futex_pi_state **ps, int set_waiters)
+				 struct futex_pi_state **ps, int set_waiters,
+				 struct mm_ref *mm_ref2)
 {
 	struct futex_q *top_waiter = NULL;
 	u32 curval;
@@ -1675,7 +1681,7 @@ static int futex_proxy_trylock_atomic(u32 __user *pifutex,
 	ret = futex_lock_pi_atomic(pifutex, hb2, key2, ps, top_waiter->task,
 				   set_waiters);
 	if (ret == 1) {
-		requeue_pi_wake_futex(top_waiter, key2, hb2);
+		requeue_pi_wake_futex(top_waiter, key2, hb2, mm_ref2);
 		return vpid;
 	}
 	return ret;
@@ -1704,6 +1710,8 @@ static int futex_requeue(u32 __user *uaddr1, unsigned int flags,
 			 u32 *cmpval, int requeue_pi)
 {
 	union futex_key key1 = FUTEX_KEY_INIT, key2 = FUTEX_KEY_INIT;
+	MM_REF(mm_ref1);
+	MM_REF(mm_ref2);
 	int drop_count = 0, task_count = 0, ret;
 	struct futex_pi_state *pi_state = NULL;
 	struct futex_hash_bucket *hb1, *hb2;
@@ -1739,11 +1747,11 @@ static int futex_requeue(u32 __user *uaddr1, unsigned int flags,
 	}
 
 retry:
-	ret = get_futex_key(uaddr1, flags & FLAGS_SHARED, &key1, VERIFY_READ);
+	ret = get_futex_key(uaddr1, flags & FLAGS_SHARED, &key1, VERIFY_READ, &mm_ref1);
 	if (unlikely(ret != 0))
 		goto out;
 	ret = get_futex_key(uaddr2, flags & FLAGS_SHARED, &key2,
-			    requeue_pi ? VERIFY_WRITE : VERIFY_READ);
+			    requeue_pi ? VERIFY_WRITE : VERIFY_READ, &mm_ref2);
 	if (unlikely(ret != 0))
 		goto out_put_key1;
 
@@ -1779,8 +1787,8 @@ retry_private:
 			if (!(flags & FLAGS_SHARED))
 				goto retry_private;
 
-			put_futex_key(&key2);
-			put_futex_key(&key1);
+			put_futex_key(&key2, &mm_ref2);
+			put_futex_key(&key1, &mm_ref1);
 			goto retry;
 		}
 		if (curval != *cmpval) {
@@ -1797,7 +1805,7 @@ retry_private:
 		 * faults rather in the requeue loop below.
 		 */
 		ret = futex_proxy_trylock_atomic(uaddr2, hb1, hb2, &key1,
-						 &key2, &pi_state, nr_requeue);
+						 &key2, &pi_state, nr_requeue, &mm_ref2);
 
 		/*
 		 * At this point the top_waiter has either taken uaddr2 or is
@@ -1836,8 +1844,8 @@ retry_private:
 		case -EFAULT:
 			double_unlock_hb(hb1, hb2);
 			hb_waiters_dec(hb2);
-			put_futex_key(&key2);
-			put_futex_key(&key1);
+			put_futex_key(&key2, &mm_ref2);
+			put_futex_key(&key1, &mm_ref1);
 			ret = fault_in_user_writeable(uaddr2);
 			if (!ret)
 				goto retry;
@@ -1851,8 +1859,8 @@ retry_private:
 			 */
 			double_unlock_hb(hb1, hb2);
 			hb_waiters_dec(hb2);
-			put_futex_key(&key2);
-			put_futex_key(&key1);
+			put_futex_key(&key2, &mm_ref2);
+			put_futex_key(&key1, &mm_ref1);
 			cond_resched();
 			goto retry;
 		default:
@@ -1921,7 +1929,7 @@ retry_private:
 				 * value. It will drop the refcount after
 				 * doing so.
 				 */
-				requeue_pi_wake_futex(this, &key2, hb2);
+				requeue_pi_wake_futex(this, &key2, hb2, &mm_ref2);
 				drop_count++;
 				continue;
 			} else if (ret) {
@@ -1942,7 +1950,7 @@ retry_private:
 				break;
 			}
 		}
-		requeue_futex(this, hb1, hb2, &key2);
+		requeue_futex(this, hb1, hb2, &key2, &mm_ref2);
 		drop_count++;
 	}
 
@@ -1965,12 +1973,12 @@ out_unlock:
 	 * hold the references to key1.
 	 */
 	while (--drop_count >= 0)
-		drop_futex_key_refs(&key1);
+		drop_futex_key_refs(&key1, &mm_ref1);
 
 out_put_keys:
-	put_futex_key(&key2);
+	put_futex_key(&key2, &mm_ref2);
 out_put_key1:
-	put_futex_key(&key1);
+	put_futex_key(&key1, &mm_ref1);
 out:
 	return ret ? ret : task_count;
 }
@@ -2091,7 +2099,7 @@ retry:
 		ret = 1;
 	}
 
-	drop_futex_key_refs(&q->key);
+	drop_futex_key_refs(&q->key, &q->mm_ref);
 	return ret;
 }
 
@@ -2365,7 +2373,7 @@ static int futex_wait_setup(u32 __user *uaddr, u32 val, unsigned int flags,
 	 * while the syscall executes.
 	 */
 retry:
-	ret = get_futex_key(uaddr, flags & FLAGS_SHARED, &q->key, VERIFY_READ);
+	ret = get_futex_key(uaddr, flags & FLAGS_SHARED, &q->key, VERIFY_READ, &q->mm_ref);
 	if (unlikely(ret != 0))
 		return ret;
 
@@ -2384,7 +2392,7 @@ retry_private:
 		if (!(flags & FLAGS_SHARED))
 			goto retry_private;
 
-		put_futex_key(&q->key);
+		put_futex_key(&q->key, &q->mm_ref);
 		goto retry;
 	}
 
@@ -2395,7 +2403,7 @@ retry_private:
 
 out:
 	if (ret)
-		put_futex_key(&q->key);
+		put_futex_key(&q->key, &q->mm_ref);
 	return ret;
 }
 
@@ -2407,6 +2415,8 @@ static int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
 	struct futex_hash_bucket *hb;
 	struct futex_q q = futex_q_init;
 	int ret;
+
+	INIT_MM_REF(&q.mm_ref);
 
 	if (!bitset)
 		return -EINVAL;
@@ -2507,6 +2517,8 @@ static int futex_lock_pi(u32 __user *uaddr, unsigned int flags,
 	struct futex_q q = futex_q_init;
 	int res, ret;
 
+	INIT_MM_REF(&q.mm_ref);
+
 	if (refill_pi_state_cache())
 		return -ENOMEM;
 
@@ -2519,7 +2531,7 @@ static int futex_lock_pi(u32 __user *uaddr, unsigned int flags,
 	}
 
 retry:
-	ret = get_futex_key(uaddr, flags & FLAGS_SHARED, &q.key, VERIFY_WRITE);
+	ret = get_futex_key(uaddr, flags & FLAGS_SHARED, &q.key, VERIFY_WRITE, &q.mm_ref);
 	if (unlikely(ret != 0))
 		goto out;
 
@@ -2547,7 +2559,7 @@ retry_private:
 			 * - The user space value changed.
 			 */
 			queue_unlock(hb);
-			put_futex_key(&q.key);
+			put_futex_key(&q.key, &q.mm_ref);
 			cond_resched();
 			goto retry;
 		default:
@@ -2601,7 +2613,7 @@ out_unlock_put_key:
 	queue_unlock(hb);
 
 out_put_key:
-	put_futex_key(&q.key);
+	put_futex_key(&q.key, &q.mm_ref);
 out:
 	if (to)
 		destroy_hrtimer_on_stack(&to->timer);
@@ -2617,7 +2629,7 @@ uaddr_faulted:
 	if (!(flags & FLAGS_SHARED))
 		goto retry_private;
 
-	put_futex_key(&q.key);
+	put_futex_key(&q.key, &q.mm_ref);
 	goto retry;
 }
 
@@ -2630,6 +2642,7 @@ static int futex_unlock_pi(u32 __user *uaddr, unsigned int flags)
 {
 	u32 uninitialized_var(curval), uval, vpid = task_pid_vnr(current);
 	union futex_key key = FUTEX_KEY_INIT;
+	MM_REF(mm_ref);
 	struct futex_hash_bucket *hb;
 	struct futex_q *match;
 	int ret;
@@ -2643,7 +2656,7 @@ retry:
 	if ((uval & FUTEX_TID_MASK) != vpid)
 		return -EPERM;
 
-	ret = get_futex_key(uaddr, flags & FLAGS_SHARED, &key, VERIFY_WRITE);
+	ret = get_futex_key(uaddr, flags & FLAGS_SHARED, &key, VERIFY_WRITE, &mm_ref);
 	if (ret)
 		return ret;
 
@@ -2676,7 +2689,7 @@ retry:
 		 */
 		if (ret == -EAGAIN) {
 			spin_unlock(&hb->lock);
-			put_futex_key(&key);
+			put_futex_key(&key, &mm_ref);
 			goto retry;
 		}
 		/*
@@ -2704,12 +2717,12 @@ retry:
 out_unlock:
 	spin_unlock(&hb->lock);
 out_putkey:
-	put_futex_key(&key);
+	put_futex_key(&key, &mm_ref);
 	return ret;
 
 pi_faulted:
 	spin_unlock(&hb->lock);
-	put_futex_key(&key);
+	put_futex_key(&key, &mm_ref);
 
 	ret = fault_in_user_writeable(uaddr);
 	if (!ret)
@@ -2816,8 +2829,11 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
 	struct rt_mutex *pi_mutex = NULL;
 	struct futex_hash_bucket *hb;
 	union futex_key key2 = FUTEX_KEY_INIT;
+	MM_REF(mm_ref2);
 	struct futex_q q = futex_q_init;
 	int res, ret;
+
+	INIT_MM_REF(&q.mm_ref);
 
 	if (uaddr == uaddr2)
 		return -EINVAL;
@@ -2844,7 +2860,7 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
 	RB_CLEAR_NODE(&rt_waiter.tree_entry);
 	rt_waiter.task = NULL;
 
-	ret = get_futex_key(uaddr2, flags & FLAGS_SHARED, &key2, VERIFY_WRITE);
+	ret = get_futex_key(uaddr2, flags & FLAGS_SHARED, &key2, VERIFY_WRITE, &mm_ref2);
 	if (unlikely(ret != 0))
 		goto out;
 
@@ -2951,9 +2967,9 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
 	}
 
 out_put_keys:
-	put_futex_key(&q.key);
+	put_futex_key(&q.key, &q.mm_ref);
 out_key2:
-	put_futex_key(&key2);
+	put_futex_key(&key2, &mm_ref2);
 
 out:
 	if (to) {
