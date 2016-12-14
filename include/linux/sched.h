@@ -2872,6 +2872,11 @@ static inline unsigned long sigsp(unsigned long sp, struct ksignal *ksig)
  */
 extern struct mm_struct * mm_alloc(void);
 
+static inline void mmgrab(struct mm_struct *mm)
+{
+	atomic_inc(&mm->mm_count);
+}
+
 /* mmdrop drops the mm and the page tables */
 extern void __mmdrop(struct mm_struct *);
 static inline void mmdrop(struct mm_struct *mm)
